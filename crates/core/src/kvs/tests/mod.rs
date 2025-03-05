@@ -8,8 +8,28 @@
 	feature = "kv-surrealcs",
 ))]
 
+use super::Datastore;
 use crate::kvs::clock::SizedClock;
-use std::sync::Arc;
+use std::{future::Future, sync::Arc};
+use uuid::Uuid;
+
+macro_rules! include_tests {
+	($new_ds:ident => $($name:ident),* $(,)?) => {
+		$(
+			super::$name::define_tests!($new_ds);
+		)*
+	};
+}
+
+mod multireader;
+mod multiwriter_different_keys;
+mod multiwriter_same_keys_allow;
+mod multiwriter_same_keys_conflict;
+mod raw;
+#[cfg(any(feature = "kv-rocksdb", feature = "kv-tikv"))]
+mod reverse_iterator;
+mod snapshot;
+mod timestamp_to_versionstamp;
 
 #[derive(Clone, Debug)]
 pub(crate) enum Kvs {
@@ -29,8 +49,25 @@ pub(crate) enum Kvs {
 #[allow(dead_code)]
 type ClockType = Arc<SizedClock>;
 
+trait CreateDs {
+	async fn create_ds(&self, id: Uuid, ty: ClockType) -> (Datastore, Kvs);
+}
+
+impl<F, Fut> CreateDs for F
+where
+	F: Fn(Uuid, ClockType) -> Fut,
+	Fut: Future<Output = (Datastore, Kvs)>,
+{
+	async fn create_ds(&self, id: Uuid, ty: ClockType) -> (Datastore, Kvs) {
+		(self)(id, ty).await
+	}
+}
+
 #[cfg(feature = "kv-mem")]
 mod mem {
+	use super::{ClockType, Kvs};
+	use crate::kvs::Datastore;
+	use uuid::Uuid;
 
 	async fn new_ds(id: Uuid, clock: ClockType) -> (Datastore, Kvs) {
 		// Use a memory datastore instance
@@ -41,23 +78,14 @@ mod mem {
 		(ds, Kvs::Mem)
 	}
 
-	async fn new_tx(write: TransactionType, lock: LockType) -> Transaction {
-		let nodeid = Uuid::new_v4();
-		let clock = Arc::new(SizedClock::Fake(FakeClock::new(Timestamp::default())));
-		new_ds(nodeid, clock).await.0.transaction(write, lock).await.unwrap()
-	}
-
-	include!("helper.rs");
-	include!("raw.rs");
-	include!("snapshot.rs");
-	include!("multireader.rs");
-	include!("multiwriter_different_keys.rs");
-	include!("multiwriter_same_keys_conflict.rs");
-	include!("timestamp_to_versionstamp.rs");
+	include_tests!(new_ds => raw,snapshot,multireader,multiwriter_different_keys,multiwriter_same_keys_conflict,timestamp_to_versionstamp);
 }
 
 #[cfg(feature = "kv-rocksdb")]
 mod rocksdb {
+	use super::{ClockType, Kvs};
+	use crate::kvs::Datastore;
+	use uuid::Uuid;
 
 	use temp_dir::TempDir;
 
@@ -71,23 +99,14 @@ mod rocksdb {
 		(ds, Kvs::Rocksdb)
 	}
 
-	async fn new_tx(write: TransactionType, lock: LockType) -> Transaction {
-		let nodeid = Uuid::new_v4();
-		let clock = Arc::new(SizedClock::Fake(FakeClock::new(Timestamp::default())));
-		new_ds(nodeid, clock).await.0.transaction(write, lock).await.unwrap()
-	}
-
-	include!("helper.rs");
-	include!("raw.rs");
-	include!("snapshot.rs");
-	include!("multireader.rs");
-	include!("multiwriter_different_keys.rs");
-	include!("multiwriter_same_keys_conflict.rs");
-	include!("timestamp_to_versionstamp.rs");
+	include_tests!(new_ds => raw,snapshot,multireader,multiwriter_different_keys,multiwriter_same_keys_conflict,timestamp_to_versionstamp,reverse_iterator);
 }
 
 #[cfg(feature = "kv-surrealkv")]
 mod surrealkv {
+	use super::{ClockType, Kvs};
+	use crate::kvs::Datastore;
+	use uuid::Uuid;
 
 	use temp_dir::TempDir;
 
@@ -101,24 +120,14 @@ mod surrealkv {
 		(ds, Kvs::SurrealKV)
 	}
 
-	async fn new_tx(write: TransactionType, lock: LockType) -> Transaction {
-		let nodeid = Uuid::new_v4();
-		let clock = Arc::new(SizedClock::Fake(FakeClock::new(Timestamp::default())));
-		let (ds, _) = new_ds(nodeid, clock).await;
-		ds.transaction(write, lock).await.unwrap()
-	}
-
-	include!("raw.rs");
-	include!("helper.rs");
-	include!("snapshot.rs");
-	include!("multireader.rs");
-	include!("multiwriter_different_keys.rs");
-	include!("multiwriter_same_keys_conflict.rs");
-	include!("timestamp_to_versionstamp.rs");
+	include_tests!(new_ds => raw,snapshot,multireader,multiwriter_different_keys,multiwriter_same_keys_conflict,timestamp_to_versionstamp);
 }
 
 #[cfg(feature = "kv-tikv")]
 mod tikv {
+	use super::{ClockType, Kvs};
+	use crate::kvs::{Datastore, LockType, TransactionType};
+	use uuid::Uuid;
 
 	async fn new_ds(id: Uuid, clock: ClockType) -> (Datastore, Kvs) {
 		// Setup the cluster connection string
@@ -126,30 +135,21 @@ mod tikv {
 		// Setup the TiKV datastore
 		let ds = Datastore::new_with_clock(path, Some(clock)).await.unwrap().with_node_id(id);
 		// Clear any previous test entries
-		let tx = ds.transaction(Write, Optimistic).await.unwrap();
-		tx.delp(vec![]).await.unwrap();
+		let tx = ds.transaction(TransactionType::Write, LockType::Optimistic).await.unwrap();
+		tx.delr(vec![0u8]..vec![0xffu8]).await.unwrap();
 		tx.commit().await.unwrap();
 		// Return the datastore
 		(ds, Kvs::Tikv)
 	}
 
-	async fn new_tx(write: TransactionType, lock: LockType) -> Transaction {
-		let nodeid = Uuid::new_v4();
-		let clock = Arc::new(SizedClock::Fake(FakeClock::new(Timestamp::default())));
-		new_ds(nodeid, clock).await.0.transaction(write, lock).await.unwrap()
-	}
-
-	include!("helper.rs");
-	include!("raw.rs");
-	include!("snapshot.rs");
-	include!("multireader.rs");
-	include!("multiwriter_different_keys.rs");
-	include!("multiwriter_same_keys_conflict.rs");
-	include!("timestamp_to_versionstamp.rs");
+	include_tests!(new_ds => raw,snapshot,multireader,multiwriter_different_keys,multiwriter_same_keys_allow,timestamp_to_versionstamp,reverse_iterator);
 }
 
 #[cfg(feature = "kv-fdb")]
 mod fdb {
+	use super::{ClockType, Kvs};
+	use crate::kvs::{Datastore, LockType, TransactionType};
+	use uuid::Uuid;
 
 	async fn new_ds(id: Uuid, clock: ClockType) -> (Datastore, Kvs) {
 		// Setup the cluster connection string
@@ -157,24 +157,12 @@ mod fdb {
 		// Setup the FoundationDB datastore
 		let ds = Datastore::new_with_clock(path, Some(clock)).await.unwrap().with_node_id(id);
 		// Clear any previous test entries
-		let tx = ds.transaction(Write, Optimistic).await.unwrap();
+		let tx = ds.transaction(TransactionType::Write, LockType::Optimistic).await.unwrap();
 		tx.delp(vec![]).await.unwrap();
 		tx.commit().await.unwrap();
 		// Return the datastore
 		(ds, Kvs::Fdb)
 	}
 
-	async fn new_tx(write: TransactionType, lock: LockType) -> Transaction {
-		let nodeid = Uuid::new_v4();
-		let clock = Arc::new(SizedClock::Fake(FakeClock::new(Timestamp::default())));
-		new_ds(nodeid, clock).await.0.transaction(write, lock).await.unwrap()
-	}
-
-	include!("helper.rs");
-	include!("raw.rs");
-	include!("snapshot.rs");
-	include!("multireader.rs");
-	include!("multiwriter_different_keys.rs");
-	include!("multiwriter_same_keys_allow.rs");
-	include!("timestamp_to_versionstamp.rs");
+	include_tests!(new_ds => raw,snapshot,multireader,multiwriter_different_keys,multiwriter_same_keys_allow,timestamp_to_versionstamp);
 }

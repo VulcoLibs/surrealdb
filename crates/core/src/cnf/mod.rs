@@ -1,3 +1,5 @@
+use crate::iam::file::extract_allowed_paths;
+use std::path::PathBuf;
 use std::sync::LazyLock;
 
 /// The characters which are supported in server record IDs.
@@ -13,7 +15,7 @@ pub const SERVER_NAME: &str = "SurrealDB";
 pub const PROTECTED_PARAM_NAMES: &[&str] = &["access", "auth", "token", "session"];
 
 /// Specifies how many concurrent jobs can be buffered in the worker channel.
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 pub static MAX_CONCURRENT_TASKS: LazyLock<usize> =
 	lazy_env_parse!("SURREAL_MAX_CONCURRENT_TASKS", usize, 64);
 
@@ -42,15 +44,20 @@ pub static DATASTORE_CACHE_SIZE: LazyLock<usize> =
 	lazy_env_parse!("SURREAL_DATASTORE_CACHE_SIZE", usize, 1_000);
 
 /// The maximum number of keys that should be scanned at once in general queries.
-pub static NORMAL_FETCH_SIZE: LazyLock<u32> = lazy_env_parse!("SURREAL_NORMAL_FETCH_SIZE", u32, 50);
+pub static NORMAL_FETCH_SIZE: LazyLock<u32> =
+	lazy_env_parse!("SURREAL_NORMAL_FETCH_SIZE", u32, 500);
 
 /// The maximum number of keys that should be scanned at once for export queries.
 pub static EXPORT_BATCH_SIZE: LazyLock<u32> =
 	lazy_env_parse!("SURREAL_EXPORT_BATCH_SIZE", u32, 1000);
 
-/// The maximum number of keys that should be fetched when streaming range scans in a Scanner.
-pub static MAX_STREAM_BATCH_SIZE: LazyLock<u32> =
-	lazy_env_parse!("SURREAL_MAX_STREAM_BATCH_SIZE", u32, 1000);
+/// The maximum number of keys that should be scanned at once for count queries.
+pub static COUNT_BATCH_SIZE: LazyLock<u32> =
+	lazy_env_parse!("SURREAL_COUNT_BATCH_SIZE", u32, 10_000);
+
+/// The maximum size of the priority queue triggering usage of the priority queue for the result collector.
+pub static MAX_ORDER_LIMIT_PRIORITY_QUEUE_SIZE: LazyLock<u32> =
+	lazy_env_parse!("SURREAL_MAX_ORDER_LIMIT_PRIORITY_QUEUE_SIZE", u32, 1000);
 
 /// The maximum number of keys that should be scanned at once per concurrent indexing batch.
 pub static INDEXING_BATCH_SIZE: LazyLock<u32> =
@@ -64,6 +71,10 @@ pub static SCRIPTING_MAX_STACK_SIZE: LazyLock<usize> =
 pub static SCRIPTING_MAX_MEMORY_LIMIT: LazyLock<usize> =
 	lazy_env_parse!("SURREAL_SCRIPTING_MAX_MEMORY_LIMIT", usize, 2 << 20);
 
+/// Used to limit allocation for builtin functions
+pub static SCRIPTING_MAX_TIME_LIMIT: LazyLock<usize> =
+	lazy_env_parse!("SURREAL_SCRIPTING_MAX_TIME_LIMIT", usize, 1000 * 5);
+
 /// Forward all signup/signin/authenticate query errors to a client performing authentication. Do not use in production.
 pub static INSECURE_FORWARD_ACCESS_ERRORS: LazyLock<bool> =
 	lazy_env_parse!("SURREAL_INSECURE_FORWARD_ACCESS_ERRORS", bool, false);
@@ -73,22 +84,6 @@ pub static INSECURE_FORWARD_ACCESS_ERRORS: LazyLock<bool> =
 pub static EXTERNAL_SORTING_BUFFER_LIMIT: LazyLock<usize> =
 	lazy_env_parse!("SURREAL_EXTERNAL_SORTING_BUFFER_LIMIT", usize, 50_000);
 
-/// Specifies whether GraphQL querying and schema definition is enabled.
-pub static GRAPHQL_ENABLE: LazyLock<bool> =
-	lazy_env_parse!("SURREAL_EXPERIMENTAL_GRAPHQL", bool, false);
-
-/// Enable experimental bearer access and stateful access grant management.
-///
-/// Still under active development. Using this experimental feature may introduce risks related
-/// to breaking changes and security issues.
-#[cfg(not(test))]
-pub static EXPERIMENTAL_BEARER_ACCESS: LazyLock<bool> =
-	lazy_env_parse!("SURREAL_EXPERIMENTAL_BEARER_ACCESS", bool, false);
-
-/// Run tests with bearer access enabled as it introduces new functionality that needs to be tested.
-#[cfg(test)]
-pub static EXPERIMENTAL_BEARER_ACCESS: LazyLock<bool> = LazyLock::new(|| true);
-
 /// Used to limit allocation for builtin functions
 pub static GENERATION_ALLOCATION_LIMIT: LazyLock<usize> = LazyLock::new(|| {
 	let n = std::env::var("SURREAL_GENERATION_ALLOCATION_LIMIT")
@@ -97,6 +92,9 @@ pub static GENERATION_ALLOCATION_LIMIT: LazyLock<usize> = LazyLock::new(|| {
 	2usize.pow(n)
 });
 
+pub static MAX_HTTP_REDIRECTS: LazyLock<usize> =
+	lazy_env_parse!("SURREAL_MAX_HTTP_REDIRECTS", usize, 10);
+
 /// Used to limit allocation for builtin functions
 pub static IDIOM_RECURSION_LIMIT: LazyLock<usize> = LazyLock::new(|| {
 	std::env::var("SURREAL_IDIOM_RECURSION_LIMIT")
@@ -104,7 +102,7 @@ pub static IDIOM_RECURSION_LIMIT: LazyLock<usize> = LazyLock::new(|| {
 		.unwrap_or(256)
 });
 
-pub static MEMORY_THRESHOLD: LazyLock<usize> = std::sync::LazyLock::new(|| {
+pub static MEMORY_THRESHOLD: LazyLock<usize> = LazyLock::new(|| {
 	std::env::var("SURREAL_MEMORY_THRESHOLD")
 		.map(|input| {
 			// Trim the input of any spaces
@@ -134,4 +132,11 @@ pub static MEMORY_THRESHOLD: LazyLock<usize> = std::sync::LazyLock::new(|| {
 			bytes
 		})
 		.unwrap_or(0)
+});
+
+/// Used to limit file access
+pub static FILE_ALLOWLIST: LazyLock<Vec<PathBuf>> = LazyLock::new(|| {
+	std::env::var("SURREAL_FILE_ALLOWLIST")
+		.map(|input| extract_allowed_paths(&input))
+		.unwrap_or_default()
 });

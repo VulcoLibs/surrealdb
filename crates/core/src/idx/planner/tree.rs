@@ -144,18 +144,16 @@ impl<'a> TreeBuilder<'a> {
 
 	async fn eval_order(&mut self) -> Result<(), Error> {
 		if let Some(o) = self.first_order {
-			if o.direction {
-				if let Node::IndexedField(id, irf) = self.resolve_idiom(&o.value).await? {
-					for (ixr, id_col) in &irf {
-						if *id_col == 0 {
-							self.index_map.order_limit = Some(IndexOption::new(
-								ixr.clone(),
-								Some(id),
-								IdiomPosition::None,
-								IndexOperator::Order,
-							));
-							break;
-						}
+			if let Node::IndexedField(id, irf) = self.resolve_idiom(&o.value).await? {
+				for (ixr, id_col) in &irf {
+					if *id_col == 0 {
+						self.index_map.order_limit = Some(IndexOption::new(
+							ixr.clone(),
+							Some(id),
+							IdiomPosition::None,
+							IndexOperator::Order(!o.direction),
+						));
+						break;
 					}
 				}
 			}
@@ -596,28 +594,30 @@ impl<'a> TreeBuilder<'a> {
 				(Operator::Equal | Operator::Exact, v, _) => {
 					self.index_map.check_compound(ixr, col, &v);
 					if col == 0 {
-						return Some(IndexOperator::Equality(vec![v]));
+						return Some(IndexOperator::Equality(v));
 					}
 				}
 				(Operator::Contain, v, IdiomPosition::Left) => {
 					if col == 0 {
-						return Some(IndexOperator::Equality(vec![v]));
+						return Some(IndexOperator::Equality(v));
 					}
 				}
 				(Operator::Inside, v, IdiomPosition::Right) => {
 					if col == 0 {
-						return Some(IndexOperator::Equality(vec![v]));
+						return Some(IndexOperator::Equality(v));
 					}
 				}
-				(
-					Operator::ContainAny | Operator::ContainAll | Operator::Inside,
-					v,
-					IdiomPosition::Left,
-				) => {
-					if col == 0 {
-						if let Value::Array(_) = v.as_ref() {
+				(Operator::Inside, v, IdiomPosition::Left) => {
+					if let Value::Array(a) = v.as_ref() {
+						self.index_map.check_compound_array(ixr, col, a);
+						if col == 0 {
 							return Some(IndexOperator::Union(v));
 						}
+					}
+				}
+				(Operator::ContainAny | Operator::ContainAll, v, IdiomPosition::Left) => {
+					if v.is_array() && col == 0 {
+						return Some(IndexOperator::Union(v));
 					}
 				}
 				(
@@ -647,7 +647,7 @@ impl<'a> TreeBuilder<'a> {
 	}
 }
 
-pub(super) type CompoundIndexes = HashMap<IndexReference, Vec<Option<Arc<Value>>>>;
+pub(super) type CompoundIndexes = HashMap<IndexReference, Vec<Vec<Arc<Value>>>>;
 
 /// For each expression a possible index option
 #[derive(Default)]
@@ -661,8 +661,16 @@ pub(super) struct IndexesMap {
 impl IndexesMap {
 	pub(crate) fn check_compound(&mut self, ixr: &IndexReference, col: usize, val: &Arc<Value>) {
 		let cols = ixr.cols.len();
-		let values = self.compound_indexes.entry(ixr.clone()).or_insert(vec![None; cols]);
-		values[col] = Some(val.clone());
+		let values = self.compound_indexes.entry(ixr.clone()).or_insert(vec![vec![]; cols]);
+		if let Some(a) = values.get_mut(col) {
+			a.push(val.clone());
+		}
+	}
+
+	pub(crate) fn check_compound_array(&mut self, ixr: &IndexReference, col: usize, a: &Array) {
+		for v in a.iter() {
+			self.check_compound(ixr, col, &Arc::new(v.clone()))
+		}
 	}
 }
 
@@ -711,8 +719,9 @@ struct SchemaCache {
 
 impl SchemaCache {
 	async fn new(opt: &Options, table: &Table, tx: &Transaction) -> Result<Self, Error> {
-		let indexes = tx.all_tb_indexes(opt.ns()?, opt.db()?, table).await?;
-		let fields = tx.all_tb_fields(opt.ns()?, opt.db()?, table, None).await?;
+		let (ns, db) = opt.ns_db()?;
+		let indexes = tx.all_tb_indexes(ns, db, table).await?;
+		let fields = tx.all_tb_fields(ns, db, table, None).await?;
 		Ok(Self {
 			indexes,
 			fields,

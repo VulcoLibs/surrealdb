@@ -1,5 +1,5 @@
 use super::escape::escape_key;
-use super::{Duration, Number, Strand};
+use super::{Duration, Idiom, Number, Part, Strand};
 use crate::sql::statements::info::InfoStructure;
 use crate::sql::{
 	fmt::{is_pretty, pretty_indent, Fmt, Pretty},
@@ -38,6 +38,7 @@ pub enum Kind {
 	Function(Option<Vec<Kind>>, Option<Box<Kind>>),
 	Range,
 	Literal(Literal),
+	References(Option<Table>, Option<Idiom>),
 }
 
 impl Default for Kind {
@@ -170,7 +171,8 @@ impl Kind {
 				| Kind::Geometry(_)
 				| Kind::Function(_, _)
 				| Kind::Range
-				| Kind::Literal(_) => return None,
+				| Kind::Literal(_)
+				| Kind::References(_, _) => return None,
 				Kind::Option(x) => {
 					this = x;
 				}
@@ -185,6 +187,52 @@ impl Kind {
 					return Some(Kind::Either(kinds));
 				}
 			}
+		}
+	}
+
+	pub(crate) fn non_optional(&self) -> &Kind {
+		match self {
+			Kind::Option(k) => k.as_ref().non_optional(),
+			_ => self,
+		}
+	}
+
+	pub(crate) fn allows_nested_kind(&self, path: &[Part], kind: &Kind) -> bool {
+		// ANY type won't cause a mismatch
+		if self.is_any() || kind.is_any() {
+			return true;
+		}
+
+		if !path.is_empty() {
+			match self {
+				Kind::Object => return matches!(path.first(), Some(Part::Field(_) | Part::All)),
+				Kind::Either(kinds) => {
+					return kinds.iter().all(|k| k.allows_nested_kind(path, kind))
+				}
+				Kind::Array(inner, len) | Kind::Set(inner, len) => {
+					return match path.first() {
+						Some(Part::All) => inner.allows_nested_kind(&path[1..], kind),
+						Some(Part::Index(i)) => {
+							if let Some(len) = len {
+								if i.as_usize() >= *len as usize {
+									return false;
+								}
+							}
+
+							inner.allows_nested_kind(&path[1..], kind)
+						}
+						_ => false,
+					}
+				}
+				_ => (),
+			}
+		}
+
+		match self {
+			Kind::Literal(lit) => lit.allows_nested_kind(path, kind),
+			Kind::Option(inner) => inner.allows_nested_kind(path, kind),
+			_ if path.is_empty() => self == kind,
+			_ => false,
 		}
 	}
 }
@@ -236,6 +284,11 @@ impl Display for Kind {
 			Kind::Either(k) => write!(f, "{}", Fmt::verbar_separated(k)),
 			Kind::Range => f.write_str("range"),
 			Kind::Literal(l) => write!(f, "{}", l),
+			Kind::References(t, i) => match (t, i) {
+				(Some(t), None) => write!(f, "references<{}>", t),
+				(Some(t), Some(i)) => write!(f, "references<{}, {}>", t, i),
+				(None, _) => f.write_str("references"),
+			},
 		}
 	}
 }
@@ -257,6 +310,7 @@ pub enum Literal {
 	Array(Vec<Kind>),
 	Object(BTreeMap<String, Kind>),
 	DiscriminatedObject(String, Vec<BTreeMap<String, Kind>>),
+	Bool(bool),
 }
 
 impl Literal {
@@ -276,6 +330,7 @@ impl Literal {
 			}
 			Self::Object(_) => Kind::Object,
 			Self::DiscriminatedObject(_, _) => Kind::Object,
+			Self::Bool(_) => Kind::Bool,
 		}
 	}
 
@@ -291,6 +346,10 @@ impl Literal {
 			},
 			Self::Duration(v) => match value {
 				Value::Duration(n) => n == v,
+				_ => false,
+			},
+			Self::Bool(v) => match value {
+				Value::Bool(b) => b == v,
 				_ => false,
 			},
 			Self::Array(a) => match value {
@@ -363,6 +422,61 @@ impl Literal {
 			},
 		}
 	}
+
+	pub(crate) fn allows_nested_kind(&self, path: &[Part], kind: &Kind) -> bool {
+		// ANY type won't cause a mismatch
+		if kind.is_any() {
+			return true;
+		}
+
+		// We reached the end of the path
+		// Check if the literal is equal to the kind
+		if path.is_empty() {
+			return match kind {
+				Kind::Literal(lit) => self == lit,
+				_ => &self.to_kind() == kind,
+			};
+		}
+
+		match self {
+			Literal::Array(x) => match path.first() {
+				Some(Part::All) => x.iter().all(|y| y.allows_nested_kind(&path[1..], kind)),
+				Some(Part::Index(i)) => {
+					if let Some(y) = x.get(i.as_usize()) {
+						y.allows_nested_kind(&path[1..], kind)
+					} else {
+						false
+					}
+				}
+				_ => false,
+			},
+			Literal::Object(x) => match path.first() {
+				Some(Part::All) => x.iter().all(|(_, y)| y.allows_nested_kind(&path[1..], kind)),
+				Some(Part::Field(k)) => {
+					if let Some(y) = x.get(&k.0) {
+						y.allows_nested_kind(&path[1..], kind)
+					} else {
+						false
+					}
+				}
+				_ => false,
+			},
+			Literal::DiscriminatedObject(_, discriminants) => match path.first() {
+				Some(Part::All) => discriminants
+					.iter()
+					.all(|o| o.iter().all(|(_, y)| y.allows_nested_kind(&path[1..], kind))),
+				Some(Part::Field(k)) => discriminants.iter().all(|o| {
+					if let Some(y) = o.get(&k.0) {
+						y.allows_nested_kind(&path[1..], kind)
+					} else {
+						false
+					}
+				}),
+				_ => false,
+			},
+			_ => false,
+		}
+	}
 }
 
 impl Display for Literal {
@@ -370,7 +484,8 @@ impl Display for Literal {
 		match self {
 			Literal::String(s) => write!(f, "{}", s),
 			Literal::Number(n) => write!(f, "{}", n),
-			Literal::Duration(n) => write!(f, "{}", n),
+			Literal::Duration(d) => write!(f, "{}", d),
+			Literal::Bool(b) => write!(f, "{}", b),
 			Literal::Array(a) => {
 				let mut f = Pretty::from(f);
 				f.write_char('[')?;

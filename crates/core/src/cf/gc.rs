@@ -2,8 +2,7 @@ use crate::err::Error;
 use crate::key::change;
 use crate::key::debug::Sprintable;
 use crate::kvs::Transaction;
-use crate::vs;
-use crate::vs::Versionstamp;
+use crate::vs::VersionStamp;
 use std::str;
 
 // gc_all_at deletes all change feed entries that become stale at the given timestamp.
@@ -14,12 +13,12 @@ pub async fn gc_all_at(tx: &Transaction, ts: u64) -> Result<(), Error> {
 	let nss = tx.all_ns().await?;
 	// Loop over each namespace
 	for ns in nss.as_ref() {
-		// Pause execution
-		yield_now!();
 		// Trace for debugging
 		trace!("Performing garbage collection on {} for timestamp {ts}", ns.name);
 		// Process the namespace
 		gc_ns(tx, ts, &ns.name).await?;
+		// Pause execution
+		yield_now!();
 	}
 	Ok(())
 }
@@ -32,8 +31,6 @@ pub async fn gc_ns(tx: &Transaction, ts: u64, ns: &str) -> Result<(), Error> {
 	let dbs = tx.all_db(ns).await?;
 	// Loop over each database
 	for db in dbs.as_ref() {
-		// Yield execution
-		yield_now!();
 		// Trace for debugging
 		trace!("Performing garbage collection on {ns}:{} for timestamp {ts}", db.name);
 		// Fetch all tables
@@ -66,16 +63,18 @@ pub async fn gc_ns(tx: &Transaction, ts: u64, ns: &str) -> Result<(), Error> {
 		if let Some(watermark_vs) = watermark_vs {
 			gc_range(tx, ns, &db.name, watermark_vs).await?;
 		}
+		// Yield execution
+		yield_now!();
 	}
 	Ok(())
 }
 
 // gc_db deletes all change feed entries in the given database that are older than the given watermark.
 #[instrument(level = "trace", target = "surrealdb::core::cfs", skip(tx))]
-pub async fn gc_range(tx: &Transaction, ns: &str, db: &str, vt: Versionstamp) -> Result<(), Error> {
+pub async fn gc_range(tx: &Transaction, ns: &str, db: &str, vt: VersionStamp) -> Result<(), Error> {
 	// Calculate the range
-	let beg = change::prefix_ts(ns, db, vs::u64_to_versionstamp(0));
-	let end = change::prefix_ts(ns, db, vt);
+	let beg = change::prefix_ts(ns, db, VersionStamp::ZERO)?;
+	let end = change::prefix_ts(ns, db, vt)?;
 	// Trace for debugging
 	trace!(
 		"Performing garbage collection on {ns}:{db} for watermark {vt:?}, between {} and {}",

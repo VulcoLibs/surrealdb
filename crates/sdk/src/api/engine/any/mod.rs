@@ -128,9 +128,9 @@
 //! In this case, the binary you build will have support for accessing an external server via WebSockets, embedding the database
 //! using RocksDB or using a distributed TiKV cluster.
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(not(target_family = "wasm"))]
 mod native;
-#[cfg(target_arch = "wasm32")]
+#[cfg(target_family = "wasm")]
 mod wasm;
 
 use crate::api::err::Error;
@@ -141,9 +141,6 @@ use crate::api::Result;
 use crate::api::Surreal;
 use crate::opt::path_to_string;
 use std::marker::PhantomData;
-use std::sync::Arc;
-use std::sync::OnceLock;
-use tokio::sync::watch;
 use url::Url;
 
 /// A trait for converting inputs to a server address object
@@ -232,11 +229,9 @@ impl Surreal<Any> {
 	/// ```
 	pub fn connect(&self, address: impl IntoEndpoint) -> Connect<Any, ()> {
 		Connect {
-			router: self.router.clone(),
-			engine: PhantomData,
+			surreal: self.inner.clone().into(),
 			address: address.into_endpoint(),
 			capacity: 0,
-			waiter: self.waiter.clone(),
 			response_type: PhantomData,
 		}
 	}
@@ -288,11 +283,9 @@ impl Surreal<Any> {
 /// ```
 pub fn connect(address: impl IntoEndpoint) -> Connect<Any, Surreal<Any>> {
 	Connect {
-		router: Arc::new(OnceLock::new()),
-		engine: PhantomData,
+		surreal: Surreal::init(),
 		address: address.into_endpoint(),
 		capacity: 0,
-		waiter: Arc::new(watch::channel(None)),
 		response_type: PhantomData,
 	}
 }

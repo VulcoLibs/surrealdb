@@ -16,7 +16,7 @@ use crate::sql::{
 	},
 	value::Value,
 };
-use derive::Store;
+
 use reblessive::tree::Stk;
 use revision::revisioned;
 use serde::{Deserialize, Serialize};
@@ -26,7 +26,7 @@ use std::{
 };
 
 #[revisioned(revision = 1)]
-#[derive(Clone, Debug, Default, Eq, PartialEq, PartialOrd, Serialize, Deserialize, Store, Hash)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, PartialOrd, Serialize, Deserialize, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[non_exhaustive]
 pub struct Statements(pub Vec<Statement>);
@@ -56,7 +56,7 @@ impl Display for Statements {
 }
 
 #[revisioned(revision = 5)]
-#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Serialize, Deserialize, Store, Hash)]
+#[derive(Clone, Debug, Eq, PartialEq, PartialOrd, Serialize, Deserialize, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[non_exhaustive]
 pub enum Statement {
@@ -148,11 +148,13 @@ impl Statement {
 			(true, Self::Update(stm)) => &Statement::Upsert(UpsertStatement {
 				only: stm.only,
 				what: stm.what.to_owned(),
+				with: stm.with.to_owned(),
 				data: stm.data.to_owned(),
 				cond: stm.cond.to_owned(),
 				output: stm.output.to_owned(),
 				timeout: stm.timeout.to_owned(),
 				parallel: stm.parallel,
+				explain: stm.explain.to_owned(),
 			}),
 			(_, stm) => stm,
 		};

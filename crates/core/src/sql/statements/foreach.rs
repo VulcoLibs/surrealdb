@@ -3,7 +3,7 @@ use crate::dbs::Options;
 use crate::doc::CursorDoc;
 use crate::err::Error;
 use crate::sql::{block::Entry, Block, Param, Value};
-use derive::Store;
+
 use reblessive::tree::Stk;
 use revision::revisioned;
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use std::fmt::{self, Display};
 use std::ops::Deref;
 
 #[revisioned(revision = 1)]
-#[derive(Clone, Debug, Default, Eq, PartialEq, PartialOrd, Serialize, Deserialize, Store, Hash)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, PartialOrd, Serialize, Deserialize, Hash)]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[non_exhaustive]
 pub struct ForeachStatement {
@@ -68,7 +68,10 @@ impl ForeachStatement {
 		};
 
 		// Loop over the values
-		'foreach: for v in iter {
+		for v in iter {
+			if ctx.is_timedout() {
+				return Err(Error::QueryTimedout);
+			}
 			// Duplicate context
 			let ctx = MutableContext::new(ctx).freeze();
 			// Set the current parameter
@@ -113,12 +116,14 @@ impl ForeachStatement {
 				};
 				// Catch any special errors
 				match res {
-					Err(Error::Continue) => continue 'foreach,
+					Err(Error::Continue) => break,
 					Err(Error::Break) => return Ok(Value::None),
 					Err(err) => return Err(err),
 					_ => (),
 				};
 			}
+			// Cooperitively yield if the task has been running for too long.
+			yield_now!();
 		}
 		// Ok all good
 		Ok(Value::None)

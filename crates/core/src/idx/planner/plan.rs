@@ -3,7 +3,7 @@ use crate::idx::ft::MatchRef;
 use crate::idx::planner::tree::{
 	CompoundIndexes, GroupRef, IdiomCol, IdiomPosition, IndexReference, Node,
 };
-use crate::idx::planner::StatementContext;
+use crate::idx::planner::{GrantedPermission, RecordStrategy, ScanDirection, StatementContext};
 use crate::sql::with::With;
 use crate::sql::{Array, Expression, Idiom, Number, Object};
 use crate::sql::{Operator, Value};
@@ -24,43 +24,47 @@ pub(super) struct PlanBuilder {
 	groups: BTreeMap<GroupRef, Group>, // The order matters because we want the plan to be consistent across repeated queries.
 }
 
+pub(super) struct PlanBuilderParameters {
+	pub(super) root: Option<Node>,
+	pub(super) gp: GrantedPermission,
+	pub(super) compound_indexes: CompoundIndexes,
+	pub(super) order_limit: Option<IndexOption>,
+	pub(super) with_indexes: Option<Vec<IndexReference>>,
+	pub(super) all_and: bool,
+	pub(super) all_expressions_with_index: bool,
+	pub(super) all_and_groups: HashMap<GroupRef, bool>,
+	pub(super) reverse_scan: bool,
+}
+
 impl PlanBuilder {
-	#[allow(clippy::too_many_arguments)]
 	#[allow(clippy::mutable_key_type)]
 	pub(super) async fn build(
-		tb: &str,
-		root: Option<Node>,
 		ctx: &StatementContext<'_>,
-		with_indexes: Option<Vec<IndexReference>>,
-		compound_indexes: CompoundIndexes,
-		order: Option<IndexOption>,
-		all_and_groups: HashMap<GroupRef, bool>,
-		all_and: bool,
-		all_expressions_with_index: bool,
+		p: PlanBuilderParameters,
 	) -> Result<Plan, Error> {
 		let mut b = PlanBuilder {
 			has_indexes: false,
 			non_range_indexes: Default::default(),
 			groups: Default::default(),
-			with_indexes,
+			with_indexes: p.with_indexes,
 		};
 
 		if let Some(With::NoIndex) = ctx.with {
-			return Self::table_iterator(ctx, Some("WITH NOINDEX"), tb).await;
+			return Self::table_iterator(ctx, Some("WITH NOINDEX"), p.gp).await;
 		}
 
 		// Browse the AST and collect information
-		if let Some(root) = &root {
+		if let Some(root) = &p.root {
 			if let Err(e) = b.eval_node(root) {
-				return Self::table_iterator(ctx, Some(&e), tb).await;
+				return Self::table_iterator(ctx, Some(&e), p.gp).await;
 			}
 		}
 
 		// If all boolean operators are AND, we can use the single index plan
-		if all_and {
+		if p.all_and {
 			// We try first the largest compound indexed
 			let mut compound_index = None;
-			for (ixr, vals) in compound_indexes {
+			for (ixr, vals) in p.compound_indexes {
 				if let Some((cols, io)) = b.check_compound_index(ixr, vals) {
 					if let Some((c, _)) = &compound_index {
 						if cols <= *c {
@@ -73,49 +77,70 @@ impl PlanBuilder {
 				}
 			}
 			if let Some((_, io)) = compound_index {
-				return Ok(Plan::SingleIndex(None, io));
+				// Evaluate if we can use keys only
+				let record_strategy = ctx.check_record_strategy(true, p.gp)?;
+				// Return the plan
+				return Ok(Plan::SingleIndex(None, io, record_strategy));
 			}
 
 			// We take the "first" range query if one is available
 			if let Some((_, group)) = b.groups.into_iter().next() {
 				if let Some((ir, rq)) = group.take_first_range() {
-					return Ok(Plan::SingleIndexRange(ir, rq));
+					// Evaluate the record strategy
+					let record_strategy = ctx.check_record_strategy(true, p.gp)?;
+					// Return the plan
+					return Ok(Plan::SingleIndexRange(ir, rq, record_strategy));
 				}
 			}
 
 			// Otherwise, we try to find the most interesting (todo: TBD) single index option
 			if let Some((e, i)) = b.non_range_indexes.pop() {
-				return Ok(Plan::SingleIndex(Some(e), i));
+				// Evaluate the record strategy
+				let record_strategy = ctx.check_record_strategy(true, p.gp)?;
+				// Return the plan
+				return Ok(Plan::SingleIndex(Some(e), i, record_strategy));
 			}
 			// If there is an order option
-			if let Some(o) = order {
-				return Ok(Plan::SingleIndex(None, o.clone()));
+			if let Some(o) = p.order_limit {
+				// Evaluate the record strategy
+				let record_strategy = ctx.check_record_strategy(true, p.gp)?;
+				// Check it is compatible with the reverse scan capability
+				if Self::check_order_scan(p.reverse_scan, o.op()) {
+					// Return the plan
+					return Ok(Plan::SingleIndex(None, o.clone(), record_strategy));
+				}
 			}
 		}
 		// If every expression is backed by an index with can use the MultiIndex plan
-		else if all_expressions_with_index {
+		else if p.all_expressions_with_index {
 			let mut ranges = Vec::with_capacity(b.groups.len());
 			for (gr, group) in b.groups {
-				if all_and_groups.get(&gr) == Some(&true) {
+				if p.all_and_groups.get(&gr) == Some(&true) {
 					group.take_union_ranges(&mut ranges);
 				} else {
 					group.take_intersect_ranges(&mut ranges);
 				}
 			}
-			return Ok(Plan::MultiIndex(b.non_range_indexes, ranges));
+			// Evaluate the record strategy
+			let record_strategy = ctx.check_record_strategy(true, p.gp)?;
+			// Return the plan
+			return Ok(Plan::MultiIndex(b.non_range_indexes, ranges, record_strategy));
 		}
-		Self::table_iterator(ctx, None, tb).await
+		Self::table_iterator(ctx, None, p.gp).await
 	}
 
 	async fn table_iterator(
 		ctx: &StatementContext<'_>,
 		reason: Option<&str>,
-		tb: &str,
+		granted_permission: GrantedPermission,
 	) -> Result<Plan, Error> {
-		// If we only count and there are no conditions and no aggregations, then we can only scan keys
-		let keys_only = ctx.is_keys_only(tb).await?;
+		// Evaluate the record strategy
+		let rs = ctx.check_record_strategy(false, granted_permission)?;
+		// Evaluate the scan direction
+		let sc = ctx.check_scan_direction();
+		// Collect the reason if any
 		let reason = reason.map(|s| s.to_string());
-		Ok(Plan::TableIterator(reason, keys_only))
+		Ok(Plan::TableIterator(reason, rs, sc))
 	}
 
 	/// Check if we have an explicit list of index that we should use
@@ -138,32 +163,78 @@ impl PlanBuilder {
 		true
 	}
 
+	/// Check if the ordering is compatible with the datastore transaction capabilities
+	fn check_order_scan(has_reverse_scan: bool, op: &IndexOperator) -> bool {
+		has_reverse_scan || matches!(op, IndexOperator::Order(false))
+	}
+
 	/// Check if a compound index can be used.
 	fn check_compound_index(
 		&self,
 		ixr: IndexReference,
-		mut vals: Vec<Option<Arc<Value>>>,
+		columns: Vec<Vec<Arc<Value>>>,
 	) -> Option<(IdiomCol, IndexOption)> {
 		// Check the index can be used
 		if !self.allowed_index(&ixr) {
 			return None;
 		}
 		// Count continues values (from the left)
-		let mut cols = 0;
-		for val in &vals {
-			if val.is_none() {
+		let mut cont = 0;
+		for vals in &columns {
+			if vals.is_empty() {
 				break;
 			}
-			cols += 1;
+			if vals.iter().all(|v| v.is_none_or_null()) {
+				break;
+			}
+			cont += 1;
 		}
-		if cols == 0 {
+		if cont == 0 {
 			return None;
 		}
-		let vals = vals.drain(0..cols).map(|v| v.unwrap()).collect();
+		let combinations = Self::cartesian_product(&columns);
+		if combinations.len() == 1 {
+			let val: Vec<Value> = combinations[0].iter().map(|v| v.as_ref().clone()).collect();
+			return Some((
+				cont,
+				IndexOption::new(
+					ixr,
+					None,
+					IdiomPosition::None,
+					IndexOperator::Equality(Arc::new(Value::Array(Array(val)))),
+				),
+			));
+		}
+		let vals: Vec<Value> = combinations
+			.iter()
+			.map(|v| {
+				let a: Vec<Value> = v.iter().map(|v| v.as_ref().clone()).collect();
+				Value::Array(Array(a))
+			})
+			.collect();
 		Some((
-			cols,
-			IndexOption::new(ixr, None, IdiomPosition::None, IndexOperator::Equality(vals)),
+			cont,
+			IndexOption::new(
+				ixr,
+				None,
+				IdiomPosition::None,
+				IndexOperator::Union(Arc::new(Value::Array(Array(vals)))),
+			),
 		))
+	}
+
+	fn cartesian_product(values: &[Vec<Arc<Value>>]) -> Vec<Vec<Arc<Value>>> {
+		values.iter().fold(vec![vec![]], |acc, v| {
+			acc.iter()
+				.flat_map(|prev| {
+					v.iter().map(move |x| {
+						let mut new_vec = prev.clone();
+						new_vec.push(x.clone());
+						new_vec
+					})
+				})
+				.collect()
+		})
 	}
 
 	fn eval_node(&mut self, node: &Node) -> Result<(), String> {
@@ -207,13 +278,27 @@ impl PlanBuilder {
 
 pub(super) enum Plan {
 	/// Table full scan
-	TableIterator(Option<String>, bool),
+	/// 1: An optional reason
+	/// 2: A record strategy
+	TableIterator(Option<String>, RecordStrategy, ScanDirection),
 	/// Index scan filtered on records matching a given expression
-	SingleIndex(Option<Arc<Expression>>, IndexOption),
+	/// 1: The optional expression associated with the index
+	/// 2: A record strategy
+	SingleIndex(Option<Arc<Expression>>, IndexOption, RecordStrategy),
 	/// Union of filtered index scans
-	MultiIndex(Vec<(Arc<Expression>, IndexOption)>, Vec<(IndexReference, UnionRangeQueryBuilder)>),
+	/// 1: A list of expression and index options
+	/// 2: A list of index ranges
+	/// 3: A record strategy
+	MultiIndex(
+		Vec<(Arc<Expression>, IndexOption)>,
+		Vec<(IndexReference, UnionRangeQueryBuilder)>,
+		RecordStrategy,
+	),
 	/// Index scan for record matching a given range
-	SingleIndexRange(IndexReference, UnionRangeQueryBuilder),
+	/// 1. The reference to index
+	/// 2. The index range
+	/// 3. A record strategy
+	SingleIndexRange(IndexReference, UnionRangeQueryBuilder, RecordStrategy),
 }
 
 #[derive(Debug, Eq, PartialEq, Hash, Clone)]
@@ -230,14 +315,15 @@ pub(super) struct IndexOption {
 
 #[derive(Debug, Eq, PartialEq, Hash)]
 pub(super) enum IndexOperator {
-	Equality(Vec<Arc<Value>>),
+	Equality(Arc<Value>),
 	Union(Arc<Value>),
 	Join(Vec<IndexOption>),
 	RangePart(Operator, Arc<Value>),
 	Matches(String, Option<MatchRef>),
 	Knn(Arc<Vec<Number>>, u32),
 	Ann(Arc<Vec<Number>>, u32, u32),
-	Order,
+	/// false = ascending, true = descending
+	Order(bool),
 }
 
 impl IndexOption {
@@ -275,16 +361,13 @@ impl IndexOption {
 		self.id_pos
 	}
 
-	fn reduce_array(values: &[Arc<Value>]) -> Value {
-		if values.len() == 1 {
-			if let Value::Array(a) = values[0].as_ref() {
-				if a.len() == 1 {
-					return a[0].clone();
-				}
+	fn reduce_array(value: &Value) -> Value {
+		if let Value::Array(a) = value {
+			if a.len() == 1 {
+				return a[0].clone();
 			}
-			return values[0].as_ref().clone();
 		}
-		Value::from(Array(values.iter().map(|v| v.as_ref().clone()).collect()))
+		value.clone()
 	}
 
 	pub(crate) fn explain(&self) -> Value {
@@ -328,8 +411,15 @@ impl IndexOption {
 				e.insert("operator", op);
 				e.insert("value", val);
 			}
-			IndexOperator::Order => {
-				e.insert("operator", Value::from("Order"));
+			IndexOperator::Order(reverse) => {
+				e.insert(
+					"operator",
+					Value::from(if *reverse {
+						"ReverseOrder"
+					} else {
+						"Order"
+					}),
+				);
 			}
 		};
 		Value::from(e)
@@ -500,14 +590,14 @@ mod tests {
 			IndexReference::new(Arc::new([]), 1),
 			Some(Idiom::parse("test").into()),
 			IdiomPosition::Right,
-			IndexOperator::Equality(vec![Value::Array(Array::from(vec!["test"])).into()]),
+			IndexOperator::Equality(Value::Array(Array::from(vec!["test"])).into()),
 		);
 
 		let io2 = IndexOption::new(
 			IndexReference::new(Arc::new([]), 1),
 			Some(Idiom::parse("test").into()),
 			IdiomPosition::Right,
-			IndexOperator::Equality(vec![Value::Array(Array::from(vec!["test"])).into()]),
+			IndexOperator::Equality(Value::Array(Array::from(vec!["test"])).into()),
 		);
 
 		set.insert(io1);
