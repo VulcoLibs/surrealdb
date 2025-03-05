@@ -4,14 +4,10 @@ use crate::{
 	sql::{
 		order::{OrderList, Ordering},
 		statements::SelectStatement,
-		Explain, Field, Fields, Ident, Idioms, Limit, Order, Split, Splits, Start, Values, Version,
-		With,
+		Field, Fields, Idioms, Limit, Order, Split, Splits, Start, Values, Version,
 	},
 	syn::{
-		parser::{
-			mac::{expected, unexpected},
-			ParseResult, Parser,
-		},
+		parser::{mac::expected, ParseResult, Parser},
 		token::{t, Span},
 	},
 };
@@ -62,7 +58,7 @@ impl Parser<'_> {
 		let timeout = self.try_parse_timeout()?;
 		let parallel = self.eat(t!("PARALLEL"));
 		let tempfiles = self.eat(t!("TEMPFILES"));
-		let explain = self.eat(t!("EXPLAIN")).then(|| Explain(self.eat(t!("FULL"))));
+		let explain = self.try_parse_explain()?;
 
 		Ok(SelectStatement {
 			expr,
@@ -85,30 +81,7 @@ impl Parser<'_> {
 		})
 	}
 
-	fn try_parse_with(&mut self) -> ParseResult<Option<With>> {
-		if !self.eat(t!("WITH")) {
-			return Ok(None);
-		}
-		let next = self.next();
-		let with = match next.kind {
-			t!("NOINDEX") => With::NoIndex,
-			t!("NO") => {
-				expected!(self, t!("INDEX"));
-				With::NoIndex
-			}
-			t!("INDEX") => {
-				let mut index = vec![self.next_token_value::<Ident>()?.0];
-				while self.eat(t!(",")) {
-					index.push(self.next_token_value::<Ident>()?.0);
-				}
-				With::Index(index)
-			}
-			_ => unexpected!(self, next, "`NO`, `NOINDEX` or `INDEX`"),
-		};
-		Ok(Some(with))
-	}
-
-	async fn try_parse_split(
+	pub(crate) async fn try_parse_split(
 		&mut self,
 		ctx: &mut Stk,
 		fields: &Fields,
@@ -142,7 +115,7 @@ impl Parser<'_> {
 		Ok(Some(Splits(res)))
 	}
 
-	async fn try_parse_orders(
+	pub(crate) async fn try_parse_orders(
 		&mut self,
 		ctx: &mut Stk,
 		fields: &Fields,
@@ -213,7 +186,7 @@ impl Parser<'_> {
 		})
 	}
 
-	async fn try_parse_limit(&mut self, ctx: &mut Stk) -> ParseResult<Option<Limit>> {
+	pub(crate) async fn try_parse_limit(&mut self, ctx: &mut Stk) -> ParseResult<Option<Limit>> {
 		if !self.eat(t!("LIMIT")) {
 			return Ok(None);
 		}
@@ -222,7 +195,7 @@ impl Parser<'_> {
 		Ok(Some(Limit(value)))
 	}
 
-	async fn try_parse_start(&mut self, ctx: &mut Stk) -> ParseResult<Option<Start>> {
+	pub(crate) async fn try_parse_start(&mut self, ctx: &mut Stk) -> ParseResult<Option<Start>> {
 		if !self.eat(t!("START")) {
 			return Ok(None);
 		}

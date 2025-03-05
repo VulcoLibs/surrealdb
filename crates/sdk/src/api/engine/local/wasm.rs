@@ -5,7 +5,6 @@ use crate::api::engine::local::Db;
 use crate::api::method::BoxFuture;
 use crate::api::opt::Endpoint;
 use crate::api::ExtraFeatures;
-use crate::api::OnceLockExt;
 use crate::api::Result;
 use crate::api::Surreal;
 use crate::dbs::Session;
@@ -16,7 +15,7 @@ use crate::opt::auth::Root;
 use crate::opt::WaitFor;
 use crate::options::EngineOptions;
 use crate::{Action, Notification};
-use channel::{Receiver, Sender};
+use async_channel::{Receiver, Sender};
 use futures::stream::poll_fn;
 use futures::FutureExt;
 use futures::StreamExt;
@@ -25,9 +24,9 @@ use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::atomic::AtomicI64;
 use std::sync::Arc;
-use std::sync::OnceLock;
 use std::task::Poll;
 use tokio::sync::watch;
+use tokio::sync::RwLock;
 use tokio_util::sync::CancellationToken;
 use wasm_bindgen_futures::spawn_local;
 
@@ -37,11 +36,12 @@ impl Connection for Db {
 	fn connect(address: Endpoint, capacity: usize) -> BoxFuture<'static, Result<Surreal<Self>>> {
 		Box::pin(async move {
 			let (route_tx, route_rx) = match capacity {
-				0 => channel::unbounded(),
-				capacity => channel::bounded(capacity),
+				0 => async_channel::unbounded(),
+				capacity => async_channel::bounded(capacity),
 			};
 
-			let (conn_tx, conn_rx) = channel::bounded(1);
+			let (conn_tx, conn_rx) = async_channel::bounded(1);
+			let config = address.config.clone();
 
 			spawn_local(run_router(address, conn_tx, route_rx));
 
@@ -50,14 +50,15 @@ impl Connection for Db {
 			let mut features = HashSet::new();
 			features.insert(ExtraFeatures::LiveQueries);
 
-			Ok(Surreal::new_from_router_waiter(
-				Arc::new(OnceLock::with_value(Router {
-					features,
-					sender: route_tx,
-					last_id: AtomicI64::new(0),
-				})),
-				Arc::new(watch::channel(Some(WaitFor::Connection))),
-			))
+			let waiter = watch::channel(Some(WaitFor::Connection));
+			let router = Router {
+				features,
+				config,
+				sender: route_tx,
+				last_id: AtomicI64::new(0),
+			};
+
+			Ok((router, waiter).into())
 		})
 	}
 }
@@ -78,21 +79,21 @@ pub(crate) async fn run_router(
 	let kvs = match Datastore::new(&address.path).await {
 		Ok(kvs) => {
 			if let Err(error) = kvs.bootstrap().await {
-				let _ = conn_tx.send(Err(error.into())).await;
+				conn_tx.send(Err(error.into())).await.ok();
 				return;
 			}
 			// If a root user is specified, setup the initial datastore credentials
 			if let Some(root) = configured_root {
 				if let Err(error) = kvs.initialise_credentials(root.username, root.password).await {
-					let _ = conn_tx.send(Err(error.into())).await;
+					conn_tx.send(Err(error.into())).await.ok();
 					return;
 				}
 			}
-			let _ = conn_tx.send(Ok(())).await;
+			conn_tx.send(Ok(())).await.ok();
 			kvs.with_auth_enabled(configured_root.is_some())
 		}
 		Err(error) => {
-			let _ = conn_tx.send(Err(error.into())).await;
+			conn_tx.send(Err(error.into())).await.ok();
 			return;
 		}
 	};
@@ -109,9 +110,9 @@ pub(crate) async fn run_router(
 		.with_capabilities(address.config.capabilities);
 
 	let kvs = Arc::new(kvs);
-	let mut vars = BTreeMap::new();
-	let mut live_queries = HashMap::new();
-	let mut session = Session::default().with_rt(true);
+	let vars = Arc::new(RwLock::new(BTreeMap::new()));
+	let live_queries = Arc::new(RwLock::new(HashMap::new()));
+	let session = Arc::new(RwLock::new(Session::default().with_rt(true)));
 
 	let canceller = CancellationToken::new();
 
@@ -148,17 +149,17 @@ pub(crate) async fn run_router(
 				match super::router(
 					route.request,
 					&kvs,
-					&mut session,
-					&mut vars,
-					&mut live_queries,
+					&session,
+					&vars,
+					&live_queries,
 				)
 				.await
 				{
 					Ok(value) => {
-						let _ = route.response.send(Ok(value)).await;
+						route.response.send(Ok(value)).await.ok();
 					}
 					Err(error) => {
-						let _ = route.response.send(Err(error)).await;
+						route.response.send(Err(error)).await.ok();
 					}
 				}
 			}
@@ -170,7 +171,7 @@ pub(crate) async fn run_router(
 				};
 
 				let id = notification.id;
-				if let Some(sender) = live_queries.get(&id) {
+				if let Some(sender) = live_queries.read().await.get(&id) {
 
 					let notification = Notification {
 						query_id: notification.id.0,
@@ -179,9 +180,9 @@ pub(crate) async fn run_router(
 					};
 
 					if sender.send(notification).await.is_err() {
-						live_queries.remove(&id);
+						live_queries.write().await.remove(&id);
 						if let Err(error) =
-							super::kill_live_query(&kvs, *id, &session, vars.clone()).await
+							super::kill_live_query(&kvs, *id, &*session.read().await, vars.read().await.clone()).await
 						{
 							warn!("Failed to kill live query '{id}'; {error}");
 						}
@@ -193,7 +194,7 @@ pub(crate) async fn run_router(
 	// Shutdown and stop closed tasks
 	canceller.cancel();
 	// Wait for background tasks to finish
-	let _ = tasks.resolve().await;
+	tasks.resolve().await.ok();
 	// Delete this node from the cluster
-	let _ = kvs.shutdown().await;
+	kvs.shutdown().await.ok();
 }

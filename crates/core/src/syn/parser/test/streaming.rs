@@ -26,13 +26,13 @@ use crate::{
 		Algorithm, Array, Base, Block, Cond, Data, Datetime, Dir, Duration, Edges, Explain,
 		Expression, Fetch, Fetchs, Field, Fields, Future, Graph, Group, Groups, Id, Ident, Idiom,
 		Idioms, Index, Kind, Limit, Number, Object, Operator, Order, Output, Param, Part,
-		Permission, Permissions, Scoring, Split, Splits, Start, Statement, Strand, Subquery, Table,
-		TableType, Tables, Thing, Timeout, Uuid, Value, Values, Version, With,
+		Permission, Permissions, Regex, Scoring, Script, Split, Splits, Start, Statement, Strand,
+		Subquery, Table, TableType, Tables, Thing, Timeout, Uuid, Value, Values, Version, With,
 	},
-	syn::parser::{Parser, PartialResult},
+	syn::parser::StatementStream,
 };
+use bytes::BytesMut;
 use chrono::{offset::TimeZone, NaiveDate, Offset, Utc};
-use reblessive::Stack;
 
 fn ident_field(name: &str) -> Value {
 	Value::Idiom(Idiom(vec![Part::Field(Ident(name.to_string()))]))
@@ -74,8 +74,8 @@ static SOURCE: &str = r#"
 	DEFINE INDEX index ON TABLE table FIELDS a UNIQUE;
 	DEFINE INDEX index ON TABLE table FIELDS a MTREE DIMENSION 4 DISTANCE MINKOWSKI 5 CAPACITY 6 DOC_IDS_ORDER 7 DOC_IDS_CACHE 8 MTREE_CACHE 9;
 	DEFINE ANALYZER ana FILTERS ASCII, EDGENGRAM(1,2), NGRAM(3,4), LOWERCASE, SNOWBALL(NLD), UPPERCASE TOKENIZERS BLANK, CAMEL, CLASS, PUNCT FUNCTION fn::foo::bar;
-	DELETE FROM ONLY |foo:32..64| Where 2 RETURN AFTER TIMEOUT 1s PARALLEL;
-	DELETE FROM ONLY a:b->?[$][?true] WHERE null RETURN NULL TIMEOUT 1h PARALLEL;
+	DELETE FROM ONLY |foo:32..64| WITH INDEX index,index_2 Where 2 RETURN AFTER TIMEOUT 1s PARALLEL EXPLAIN FULL;
+	DELETE FROM ONLY a:b->?[$][?true] WITH INDEX index,index_2 WHERE null RETURN NULL TIMEOUT 1h PARALLEL EXPLAIN FULL;
 	FOR $foo IN (SELECT foo FROM bar) * 2 {
 		BREAK
 	};
@@ -106,8 +106,14 @@ static SOURCE: &str = r#"
 	RELATE ONLY [1,2]->a:b->(CREATE foo) UNIQUE SET a += 1 RETURN NONE PARALLEL;
 	REMOVE FUNCTION fn::foo::bar();
 	REMOVE FIELD foo.bar[10] ON bar;
-	UPDATE ONLY <future> { "text" }, a->b UNSET foo... , a->b, c[*] WHERE true RETURN DIFF TIMEOUT 1s PARALLEL;
-	UPSERT ONLY <future> { "text" }, a->b UNSET foo... , a->b, c[*] WHERE true RETURN DIFF TIMEOUT 1s PARALLEL;
+	UPDATE ONLY <future> { "text" }, a->b WITH INDEX index,index_2 UNSET foo... , a->b, c[*] WHERE true RETURN DIFF TIMEOUT 1s PARALLEL EXPLAIN FULL;
+	UPSERT ONLY <future> { "text" }, a->b WITH INDEX index,index_2 UNSET foo... , a->b, c[*] WHERE true RETURN DIFF TIMEOUT 1s PARALLEL EXPLAIN FULL;
+	function(){ ((1 + 1)) };
+	"a b c d e f g h";
+	u"ffffffff-ffff-ffff-ffff-ffffffffffff";
+	r"a:[1,2,3,4,5,6,7,8,9,10]";
+	/a b c d e f/;
+	-123.456e10;
 "#;
 
 fn statements() -> Vec<Statement> {
@@ -226,8 +232,8 @@ fn statements() -> Vec<Statement> {
 			authenticate: None,
 			// Default durations.
 			duration: AccessDuration {
-				grant: Some(Duration::from_days(30)),
-				token: Some(Duration::from_hours(1)),
+				grant: Some(Duration::from_days(30).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			},
 			comment: Some(Strand("bar".to_string())),
@@ -290,7 +296,6 @@ fn statements() -> Vec<Statement> {
 			cache_events_ts: uuid::Uuid::default(),
 			cache_tables_ts: uuid::Uuid::default(),
 			cache_indexes_ts: uuid::Uuid::default(),
-			cache_lives_ts: uuid::Uuid::default(),
 		})),
 		Statement::Define(DefineStatement::Event(DefineEventStatement {
 			name: Ident("event".to_owned()),
@@ -327,6 +332,8 @@ fn statements() -> Vec<Statement> {
 			comment: None,
 			if_not_exists: false,
 			overwrite: false,
+			reference: None,
+			default_always: false,
 		})),
 		Statement::Define(DefineStatement::Index(DefineIndexStatement {
 			name: Ident("index".to_owned()),
@@ -408,10 +415,12 @@ fn statements() -> Vec<Statement> {
 		Statement::Delete(DeleteStatement {
 			only: true,
 			what: Values(vec![Value::Mock(crate::sql::Mock::Range("foo".to_string(), 32, 64))]),
+			with: Some(With::Index(vec!["index".to_owned(), "index_2".to_owned()])),
 			cond: Some(Cond(Value::Number(Number::Int(2)))),
 			output: Some(Output::After),
 			timeout: Some(Timeout(Duration(std::time::Duration::from_secs(1)))),
 			parallel: true,
+			explain: Some(Explain(true)),
 		}),
 		Statement::Delete(DeleteStatement {
 			only: true,
@@ -427,10 +436,12 @@ fn statements() -> Vec<Statement> {
 				Part::Last,
 				Part::Where(Value::Bool(true)),
 			]))]),
+			with: Some(With::Index(vec!["index".to_owned(), "index_2".to_owned()])),
 			cond: Some(Cond(Value::Null)),
 			output: Some(Output::Null),
 			timeout: Some(Timeout(Duration(std::time::Duration::from_secs(60 * 60)))),
 			parallel: true,
+			explain: Some(Explain(true)),
 		}),
 		Statement::Foreach(ForeachStatement {
 			param: Param(Ident("foo".to_owned())),
@@ -668,11 +679,11 @@ fn statements() -> Vec<Statement> {
 					Part::Graph(Graph {
 						dir: Dir::Out,
 						what: Tables(vec![Table("b".to_string())]),
-						expr: Fields::all(),
 						..Default::default()
 					}),
 				])),
 			]),
+			with: Some(With::Index(vec!["index".to_owned(), "index_2".to_owned()])),
 			cond: Some(Cond(Value::Bool(true))),
 			data: Some(Data::UnsetExpression(vec![
 				Idiom(vec![Part::Field(Ident("foo".to_string())), Part::Flatten]),
@@ -681,7 +692,6 @@ fn statements() -> Vec<Statement> {
 					Part::Graph(Graph {
 						dir: Dir::Out,
 						what: Tables(vec![Table("b".to_string())]),
-						expr: Fields::all(),
 						..Default::default()
 					}),
 				]),
@@ -690,6 +700,7 @@ fn statements() -> Vec<Statement> {
 			output: Some(Output::Diff),
 			timeout: Some(Timeout(Duration(std::time::Duration::from_secs(1)))),
 			parallel: true,
+			explain: Some(Explain(true)),
 		}),
 		Statement::Upsert(UpsertStatement {
 			only: true,
@@ -702,11 +713,11 @@ fn statements() -> Vec<Statement> {
 					Part::Graph(Graph {
 						dir: Dir::Out,
 						what: Tables(vec![Table("b".to_string())]),
-						expr: Fields::all(),
 						..Default::default()
 					}),
 				])),
 			]),
+			with: Some(With::Index(vec!["index".to_owned(), "index_2".to_owned()])),
 			cond: Some(Cond(Value::Bool(true))),
 			data: Some(Data::UnsetExpression(vec![
 				Idiom(vec![Part::Field(Ident("foo".to_string())), Part::Flatten]),
@@ -715,7 +726,6 @@ fn statements() -> Vec<Statement> {
 					Part::Graph(Graph {
 						dir: Dir::Out,
 						what: Tables(vec![Table("b".to_string())]),
-						expr: Fields::all(),
 						..Default::default()
 					}),
 				]),
@@ -724,74 +734,67 @@ fn statements() -> Vec<Statement> {
 			output: Some(Output::Diff),
 			timeout: Some(Timeout(Duration(std::time::Duration::from_secs(1)))),
 			parallel: true,
+			explain: Some(Explain(true)),
 		}),
+		Statement::Value(Value::Function(Box::new(crate::sql::Function::Script(
+			Script(" ((1 + 1)) ".to_owned()),
+			Vec::new(),
+		)))),
+		Statement::Value(Value::Strand(Strand("a b c d e f g h".to_owned()))),
+		Statement::Value(Value::Uuid(Uuid(uuid::Uuid::from_u128(
+			0xffffffff_ffff_ffff_ffff_ffffffffffff,
+		)))),
+		Statement::Value(Value::Thing(Thing {
+			tb: "a".to_string(),
+			id: Id::Array(Array(
+				[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].iter().copied().map(Value::from).collect(),
+			)),
+		})),
+		Statement::Value(Value::Regex(Regex("a b c d e f".try_into().unwrap()))),
+		Statement::Value(Value::from(-123.456e10)),
 	]
 }
 
 #[test]
 fn test_streaming() {
 	let expected = statements();
+	let mut statements = StatementStream::new();
+	let mut buffer = BytesMut::new();
 	let mut current_stmt = 0;
-	let source_bytes = SOURCE.as_bytes();
-	let mut source_start = 0;
-	let mut parser = Parser::new(&[]);
-	let mut stack = Stack::new();
 
-	for i in 0..(source_bytes.len() - 1) {
-		let partial_source = &source_bytes[source_start..i];
-		//let src = String::from_utf8_lossy(partial_source);
-		//println!("{}:{}", i, src);
-		parser = parser.change_source(partial_source);
-		parser.reset();
-		match stack
-			.enter(|stk| parser.parse_partial_statement(i == source_bytes.len(), stk))
-			.finish()
-		{
-			PartialResult::Empty {
-				..
-			} => continue,
-			PartialResult::MoreData => continue,
-			PartialResult::Ok {
-				value,
-				used,
-			} => {
+	for b in SOURCE.as_bytes() {
+		match statements.parse_partial(&mut buffer) {
+			Ok(Some(value)) => {
 				assert_eq!(value, expected[current_stmt]);
 				current_stmt += 1;
-				source_start += used;
 			}
-			PartialResult::Err {
-				err,
-				..
-			} => {
-				panic!("Streaming test returned an error: {}", err.render_on_bytes(partial_source))
+			Ok(None) => {}
+			Err(e) => {
+				panic!(
+					"Streaming test returned an error: {}\n\n buffer was {}",
+					e,
+					String::from_utf8_lossy(&buffer)
+				)
+			}
+		}
+
+		buffer.extend_from_slice(&[*b]);
+	}
+
+	loop {
+		match statements.parse_complete(&mut buffer) {
+			Ok(None) => break,
+			Ok(Some(value)) => {
+				assert_eq!(value, expected[current_stmt]);
+				current_stmt += 1;
+			}
+			Err(e) => {
+				panic!("Streaming test returned an error: {}", e)
 			}
 		}
 	}
 
-	let partial_source = &source_bytes[source_start..];
-	parser = parser.change_source(partial_source);
-	parser.reset();
-	match stack.enter(|stk| parser.parse_stmt(stk)).finish() {
-		Ok(value) => {
-			assert_eq!(value, expected[current_stmt]);
-			current_stmt += 1;
-		}
-		Err(e) => {
-			panic!("Streaming test returned an error: {}", e.render_on_bytes(partial_source))
-		}
+	if expected.len() != current_stmt {
+		panic!("Not all statements parsed")
 	}
-
-	let src = String::from_utf8_lossy(&source_bytes[source_start..]);
-	let range = src.char_indices().nth(100).map(|x| x.0).unwrap_or(src.len());
-	let src = &src[..range];
-	parser.reset();
-	parser = parser.change_source(&source_bytes[source_start..]);
-	assert_eq!(
-		current_stmt,
-		expected.len(),
-		"failed to parse at {}\nAt statement {}\n\n{:?}",
-		src,
-		expected[current_stmt],
-		stack.enter(|stk| parser.parse_partial_statement(true, stk)).finish()
-	);
 }

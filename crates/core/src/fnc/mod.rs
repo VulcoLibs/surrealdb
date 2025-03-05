@@ -8,6 +8,7 @@ use crate::sql::value::Value;
 use crate::sql::Thing;
 use reblessive::tree::Stk;
 
+pub mod api;
 pub mod args;
 pub mod array;
 pub mod bytes;
@@ -45,6 +46,7 @@ pub async fn run(
 	args: Vec<Value>,
 ) -> Result<Value, Error> {
 	if name.eq("sleep")
+		|| name.eq("api::invoke")
 		|| name.eq("array::all")
 		|| name.eq("array::any")
 		|| name.eq("array::every")
@@ -59,6 +61,7 @@ pub async fn run(
 		|| name.eq("array::reduce")
 		|| name.eq("array::some")
 		|| name.eq("record::exists")
+		|| name.eq("record::refs")
 		|| name.eq("type::field")
 		|| name.eq("type::fields")
 		|| name.eq("value::diff")
@@ -152,6 +155,9 @@ pub fn synchronous(
 		"array::shuffle" => array::shuffle,
 		"array::slice" => array::slice,
 		"array::sort" => array::sort,
+		"array::sort_natural" => array::sort_natural,
+		"array::sort_lexical" => array::sort_lexical,
+		"array::sort_natural_lexical" => array::sort_natural_lexical,
 		"array::swap" => array::swap,
 		"array::transpose" => array::transpose,
 		"array::union" => array::union,
@@ -461,14 +467,14 @@ pub async fn asynchronous(
 ) -> Result<Value, Error> {
 	// Wrappers return a function as opposed to a value so that the dispatch! method can always
 	// perform a function call.
-	#[cfg(not(target_arch = "wasm32"))]
+	#[cfg(not(target_family = "wasm"))]
 	fn cpu_intensive<R: Send + 'static>(
 		function: impl FnOnce() -> R + Send + 'static,
 	) -> impl FnOnce() -> async_executor::Task<R> {
 		|| crate::exe::spawn(async move { function() })
 	}
 
-	#[cfg(target_arch = "wasm32")]
+	#[cfg(target_family = "wasm")]
 	fn cpu_intensive<R: Send + 'static>(
 		function: impl FnOnce() -> R + Send + 'static,
 	) -> impl FnOnce() -> std::future::Ready<R> {
@@ -479,6 +485,8 @@ pub async fn asynchronous(
 		name,
 		args,
 		"no such builtin function found",
+		//
+		"api::invoke" => api::invoke((stk, ctx, opt)).await,
 		//
 		"array::all" => array::all((stk, ctx, Some(opt), doc)).await,
 		"array::any" => array::any((stk, ctx, Some(opt), doc)).await,
@@ -511,6 +519,7 @@ pub async fn asynchronous(
 		"http::delete" => http::delete(ctx).await,
 		//
 		"record::exists" => record::exists((stk, ctx, Some(opt), doc)).await,
+		"record::refs" => record::refs((stk, ctx, opt, doc)).await,
 		//
 		"search::analyze" => search::analyze((stk, ctx, Some(opt))).await,
 		"search::score" => search::score((ctx, doc)).await,
@@ -595,6 +604,9 @@ pub async fn idiom(
 				"slice" => array::slice,
 				"some" => array::any((stk, ctx, Some(opt), doc)).await,
 				"sort" => array::sort,
+				"sort_natural" => array::sort_natural,
+				"sort_lexical" => array::sort_lexical,
+				"sort_natural_lexical" => array::sort_natural_lexical,
 				"swap" => array::swap,
 				"transpose" => array::transpose,
 				"union" => array::union,
@@ -677,6 +689,7 @@ pub async fn idiom(
 				"id" => record::id,
 				"table" => record::tb,
 				"tb" => record::tb,
+				"refs" => record::refs((stk, ctx, opt, doc)).await,
 			)
 		}
 		Value::Object(_) => {
@@ -899,9 +912,11 @@ fn get_execution_context<'a>(
 mod tests {
 	use regex::Regex;
 
-	#[cfg(all(feature = "scripting", feature = "kv-mem"))]
 	use crate::dbs::Capabilities;
-	use crate::sql::{statements::OutputStatement, Function, Query, Statement, Value};
+	use crate::{
+		dbs::capabilities::ExperimentalTarget,
+		sql::{statements::OutputStatement, Function, Query, Statement, Value},
+	};
 
 	#[tokio::test]
 	async fn implementations_are_present() {
@@ -926,7 +941,11 @@ mod tests {
 			let (quote, _) = line.split_once("=>").unwrap();
 			let name = quote.trim().trim_matches('"');
 
-			let res = crate::syn::parse(&format!("RETURN {}()", name));
+			let res = crate::syn::parse_with_capabilities(
+				&format!("RETURN {}()", name),
+				&Capabilities::all().with_experimental(ExperimentalTarget::DefineApi.into()),
+			);
+
 			if let Ok(Query(mut x)) = res {
 				match x.0.pop() {
 					Some(Statement::Output(OutputStatement {

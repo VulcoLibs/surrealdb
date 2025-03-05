@@ -9,7 +9,7 @@ use crate::method::ExportConfig as Config;
 use crate::method::Model;
 use crate::method::OnceLockExt;
 use crate::Surreal;
-use channel::Receiver;
+use async_channel::Receiver;
 use futures::Stream;
 use futures::StreamExt;
 use semver::Version;
@@ -123,13 +123,17 @@ where
 	///
 	/// We can pass a `bool` to export all tables or none at all:
 	/// ```
-	/// db.export().with_config().tables(true);
-	/// db.export().with_config().tables(false);
+	/// # let db = surrealdb::Surreal::<surrealdb::engine::any::Any>::init();
+	/// # let target = ();
+	/// db.export(target).with_config().tables(true);
+	/// db.export(target).with_config().tables(false);
 	/// ```
 	///
 	/// Or we can pass a `Vec<String>` to specify a list of tables to export:
 	/// ```
-	/// db.export().with_config().tables(vec!["users"]);
+	/// # let db = surrealdb::Surreal::<surrealdb::engine::any::Any>::init();
+	/// # let target = ();
+	/// db.export(target).with_config().tables(vec!["users"]);
 	/// ```
 	pub fn tables(mut self, tables: impl Into<TableConfig>) -> Self {
 		if let Some(cfg) = self.db_config.as_mut() {
@@ -169,7 +173,7 @@ where
 
 	fn into_future(self) -> Self::IntoFuture {
 		Box::pin(async move {
-			let router = self.client.router.extract()?;
+			let router = self.client.inner.router.extract()?;
 			if !router.features.contains(&ExtraFeatures::Backup) {
 				return Err(Error::BackupsNotSupported.into());
 			}
@@ -202,7 +206,7 @@ where
 
 	fn into_future(self) -> Self::IntoFuture {
 		Box::pin(async move {
-			let router = self.client.router.extract()?;
+			let router = self.client.inner.router.extract()?;
 			if !router.features.contains(&ExtraFeatures::Backup) {
 				return Err(Error::BackupsNotSupported.into());
 			}

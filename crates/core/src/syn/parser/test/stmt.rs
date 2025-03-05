@@ -40,7 +40,10 @@ use crate::{
 		Permission, Permissions, Scoring, Split, Splits, Start, Statement, Strand, Subquery, Table,
 		TableType, Tables, Thing, Timeout, Uuid, Value, Values, Version, With,
 	},
-	syn::parser::mac::test_parse,
+	syn::parser::{
+		mac::{test_parse, test_parse_with_settings},
+		ParserSettings,
+	},
 };
 use chrono::{offset::TimeZone, NaiveDate, Offset, Utc};
 
@@ -246,7 +249,7 @@ fn parse_define_user() {
 		assert_eq!(
 			stmt.duration,
 			UserDuration {
-				token: Some(Duration::from_hours(1)),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			}
 		);
@@ -271,7 +274,7 @@ fn parse_define_user() {
 		assert_eq!(
 			stmt.duration,
 			UserDuration {
-				token: Some(Duration::from_hours(1)),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			}
 		);
@@ -295,7 +298,7 @@ fn parse_define_user() {
 		assert_eq!(
 			stmt.duration,
 			UserDuration {
-				token: Some(Duration::from_hours(1)),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			}
 		);
@@ -319,8 +322,8 @@ fn parse_define_user() {
 		assert_eq!(
 			stmt.duration,
 			UserDuration {
-				token: Some(Duration::from_hours(1)),
-				session: Some(Duration::from_hours(6)),
+				token: Some(Duration::from_hours(1).unwrap()),
+				session: Some(Duration::from_hours(6).unwrap()),
 			}
 		);
 	}
@@ -343,8 +346,8 @@ fn parse_define_user() {
 		assert_eq!(
 			stmt.duration,
 			UserDuration {
-				token: Some(Duration::from_mins(15)),
-				session: Some(Duration::from_hours(6)),
+				token: Some(Duration::from_mins(15).unwrap()),
+				session: Some(Duration::from_hours(6).unwrap()),
 			}
 		);
 	}
@@ -409,8 +412,8 @@ fn parse_define_token() {
 			authenticate: None,
 			// Default durations.
 			duration: AccessDuration {
-				grant: Some(Duration::from_days(30)),
-				token: Some(Duration::from_hours(1)),
+				grant: Some(Duration::from_days(30).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			},
 			comment: Some(Strand("bar".to_string())),
@@ -441,8 +444,8 @@ fn parse_define_token_on_scope() {
 		stmt.duration,
 		// Default durations.
 		AccessDuration {
-			grant: Some(Duration::from_days(30)),
-			token: Some(Duration::from_hours(1)),
+			grant: Some(Duration::from_days(30).unwrap()),
+			token: Some(Duration::from_hours(1).unwrap()),
 			session: None,
 		}
 	);
@@ -486,8 +489,8 @@ fn parse_define_token_jwks() {
 			authenticate: None,
 			// Default durations.
 			duration: AccessDuration {
-				grant: Some(Duration::from_days(30)),
-				token: Some(Duration::from_hours(1)),
+				grant: Some(Duration::from_days(30).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			},
 			comment: Some(Strand("bar".to_string())),
@@ -518,8 +521,8 @@ fn parse_define_token_jwks_on_scope() {
 		stmt.duration,
 		// Default durations.
 		AccessDuration {
-			grant: Some(Duration::from_days(30)),
-			token: Some(Duration::from_hours(1)),
+			grant: Some(Duration::from_days(30).unwrap()),
+			token: Some(Duration::from_hours(1).unwrap()),
 			session: None,
 		}
 	);
@@ -562,8 +565,8 @@ fn parse_define_scope() {
 	assert_eq!(
 		stmt.duration,
 		AccessDuration {
-			grant: Some(Duration::from_days(30)),
-			token: Some(Duration::from_hours(1)),
+			grant: Some(Duration::from_days(30).unwrap()),
+			token: Some(Duration::from_hours(1).unwrap()),
 			session: Some(Duration::from_secs(1)),
 		}
 	);
@@ -613,8 +616,8 @@ fn parse_define_access_jwt_key() {
 				authenticate: None,
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: Some(Strand("bar".to_string())),
@@ -648,8 +651,8 @@ fn parse_define_access_jwt_key() {
 				authenticate: None,
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: None,
@@ -683,8 +686,8 @@ fn parse_define_access_jwt_key() {
 				authenticate: Some(Value::Bool(true)),
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: None,
@@ -718,8 +721,8 @@ fn parse_define_access_jwt_key() {
 				authenticate: None,
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: None,
@@ -752,7 +755,7 @@ fn parse_define_access_jwt_key() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
+					grant: Some(Duration::from_days(30).unwrap()),
 					token: Some(Duration::from_secs(10)),
 					session: None,
 				},
@@ -787,8 +790,8 @@ fn parse_define_access_jwt_key() {
 				authenticate: None,
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: None,
@@ -867,8 +870,8 @@ fn parse_define_access_jwt_key() {
 				authenticate: None,
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: Some(Strand("bar".to_string())),
@@ -899,8 +902,8 @@ fn parse_define_access_jwt_key() {
 				authenticate: None,
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: Some(Strand("bar".to_string())),
@@ -934,8 +937,8 @@ fn parse_define_access_jwt_jwks() {
 				authenticate: None,
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: Some(Strand("bar".to_string())),
@@ -968,8 +971,8 @@ fn parse_define_access_jwt_jwks() {
 				authenticate: None,
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: None,
@@ -1001,7 +1004,7 @@ fn parse_define_access_jwt_jwks() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
+					grant: Some(Duration::from_days(30).unwrap()),
 					token: Some(Duration::from_secs(10)),
 					session: None,
 				},
@@ -1035,8 +1038,8 @@ fn parse_define_access_jwt_jwks() {
 				authenticate: None,
 				// Default durations.
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
-					token: Some(Duration::from_hours(1)),
+					grant: Some(Duration::from_days(30).unwrap()),
+					token: Some(Duration::from_hours(1).unwrap()),
 					session: None,
 				},
 				comment: None,
@@ -1068,9 +1071,9 @@ fn parse_define_access_jwt_jwks() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
+					grant: Some(Duration::from_days(30).unwrap()),
 					token: Some(Duration::from_secs(10)),
-					session: Some(Duration::from_days(2)),
+					session: Some(Duration::from_days(2).unwrap()),
 				},
 				comment: None,
 				if_not_exists: false,
@@ -1100,8 +1103,8 @@ fn parse_define_access_record() {
 			stmt.duration,
 			// Default durations.
 			AccessDuration {
-				grant: Some(Duration::from_days(30)),
-				token: Some(Duration::from_hours(1)),
+				grant: Some(Duration::from_days(30).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			}
 		);
@@ -1129,9 +1132,13 @@ fn parse_define_access_record() {
 	}
 	// With refresh token. Refresh token duration is set to 10 days.
 	{
-		let res = test_parse!(
+		let res = test_parse_with_settings!(
 			parse_stmt,
-			r#"DEFINE ACCESS a ON DB TYPE RECORD WITH REFRESH DURATION FOR GRANT 10d"#
+			r#"DEFINE ACCESS a ON DB TYPE RECORD WITH REFRESH DURATION FOR GRANT 10d"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
 		)
 		.unwrap();
 
@@ -1148,8 +1155,8 @@ fn parse_define_access_record() {
 			stmt.duration,
 			// Default durations.
 			AccessDuration {
-				grant: Some(Duration::from_days(10)),
-				token: Some(Duration::from_hours(1)),
+				grant: Some(Duration::from_days(10).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			}
 		);
@@ -1218,9 +1225,9 @@ fn parse_define_access_record() {
 		assert_eq!(
 			stmt.duration,
 			AccessDuration {
-				grant: Some(Duration::from_days(30)),
-				token: Some(Duration::from_hours(1)),
-				session: Some(Duration::from_days(7)),
+				grant: Some(Duration::from_days(30).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
+				session: Some(Duration::from_days(7).unwrap()),
 			}
 		);
 		assert_eq!(stmt.comment, None);
@@ -1275,9 +1282,9 @@ fn parse_define_access_record() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
+					grant: Some(Duration::from_days(30).unwrap()),
 					token: Some(Duration::from_secs(10)),
-					session: Some(Duration::from_mins(15)),
+					session: Some(Duration::from_mins(15).unwrap()),
 				},
 				comment: None,
 				if_not_exists: false,
@@ -1314,9 +1321,9 @@ fn parse_define_access_record() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
+					grant: Some(Duration::from_days(30).unwrap()),
 					token: Some(Duration::from_secs(10)),
-					session: Some(Duration::from_mins(15)),
+					session: Some(Duration::from_mins(15).unwrap()),
 				},
 				comment: None,
 				if_not_exists: false,
@@ -1326,9 +1333,13 @@ fn parse_define_access_record() {
 	}
 	// Verification and issuing with JWT are explicitly defined with two different keys. Refresh specified before JWT.
 	{
-		let res = test_parse!(
+		let res = test_parse_with_settings!(
 			parse_stmt,
-			r#"DEFINE ACCESS a ON DB TYPE RECORD WITH REFRESH WITH JWT ALGORITHM PS512 KEY "foo" WITH ISSUER KEY "bar" DURATION FOR GRANT 10d, FOR TOKEN 10s, FOR SESSION 15m"#
+			r#"DEFINE ACCESS a ON DB TYPE RECORD WITH REFRESH WITH JWT ALGORITHM PS512 KEY "foo" WITH ISSUER KEY "bar" DURATION FOR GRANT 10d, FOR TOKEN 10s, FOR SESSION 15m"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
 		)
 		.unwrap();
 		assert_eq!(
@@ -1366,9 +1377,9 @@ fn parse_define_access_record() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(10)),
+					grant: Some(Duration::from_days(10).unwrap()),
 					token: Some(Duration::from_secs(10)),
-					session: Some(Duration::from_mins(15)),
+					session: Some(Duration::from_mins(15).unwrap()),
 				},
 				comment: None,
 				if_not_exists: false,
@@ -1378,11 +1389,13 @@ fn parse_define_access_record() {
 	}
 	// Verification and issuing with JWT are explicitly defined with two different keys. Refresh specified after JWT.
 	{
-		let res = test_parse!(
-			parse_stmt,
-			r#"DEFINE ACCESS a ON DB TYPE RECORD WITH JWT ALGORITHM PS512 KEY "foo" WITH ISSUER KEY "bar" WITH REFRESH DURATION FOR GRANT 10d, FOR TOKEN 10s, FOR SESSION 15m"#
-		)
-		.unwrap();
+		let res = test_parse_with_settings!(parse_stmt,
+			r#"DEFINE ACCESS a ON DB TYPE RECORD WITH JWT ALGORITHM PS512 KEY "foo" WITH ISSUER KEY "bar" WITH REFRESH DURATION FOR GRANT 10d, FOR TOKEN 10s, FOR SESSION 15m"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		).unwrap();
 		assert_eq!(
 			res,
 			Statement::Define(DefineStatement::Access(DefineAccessStatement {
@@ -1418,9 +1431,9 @@ fn parse_define_access_record() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(10)),
+					grant: Some(Duration::from_days(10).unwrap()),
 					token: Some(Duration::from_secs(10)),
-					session: Some(Duration::from_mins(15)),
+					session: Some(Duration::from_mins(15).unwrap()),
 				},
 				comment: None,
 				if_not_exists: false,
@@ -1457,9 +1470,9 @@ fn parse_define_access_record() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(30)),
+					grant: Some(Duration::from_days(30).unwrap()),
 					token: Some(Duration::from_secs(10)),
-					session: Some(Duration::from_mins(15)),
+					session: Some(Duration::from_mins(15).unwrap()),
 				},
 				comment: None,
 				if_not_exists: false,
@@ -1505,9 +1518,15 @@ fn parse_define_access_record() {
 fn parse_define_access_bearer() {
 	// For user on database.
 	{
-		let res =
-			test_parse!(parse_stmt, r#"DEFINE ACCESS a ON DB TYPE BEARER FOR USER COMMENT "foo""#)
-				.unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"DEFINE ACCESS a ON DB TYPE BEARER FOR USER COMMENT "foo""#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 
 		// Manually compare since DefineAccessStatement for bearer access
 		// without explicit JWT will create a random signing key during parsing.
@@ -1522,8 +1541,8 @@ fn parse_define_access_bearer() {
 			stmt.duration,
 			// Default durations.
 			AccessDuration {
-				grant: Some(Duration::from_days(30)),
-				token: Some(Duration::from_hours(1)),
+				grant: Some(Duration::from_days(30).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			}
 		);
@@ -1538,9 +1557,15 @@ fn parse_define_access_bearer() {
 	}
 	// For user on namespace.
 	{
-		let res =
-			test_parse!(parse_stmt, r#"DEFINE ACCESS a ON NS TYPE BEARER FOR USER COMMENT "foo""#)
-				.unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"DEFINE ACCESS a ON NS TYPE BEARER FOR USER COMMENT "foo""#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 
 		// Manually compare since DefineAccessStatement for bearer access
 		// without explicit JWT will create a random signing key during parsing.
@@ -1555,8 +1580,8 @@ fn parse_define_access_bearer() {
 			stmt.duration,
 			// Default durations.
 			AccessDuration {
-				grant: Some(Duration::from_days(30)),
-				token: Some(Duration::from_hours(1)),
+				grant: Some(Duration::from_days(30).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			}
 		);
@@ -1571,9 +1596,13 @@ fn parse_define_access_bearer() {
 	}
 	// For user on root.
 	{
-		let res = test_parse!(
+		let res = test_parse_with_settings!(
 			parse_stmt,
-			r#"DEFINE ACCESS a ON ROOT TYPE BEARER FOR USER COMMENT "foo""#
+			r#"DEFINE ACCESS a ON ROOT TYPE BEARER FOR USER COMMENT "foo""#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
 		)
 		.unwrap();
 
@@ -1590,8 +1619,8 @@ fn parse_define_access_bearer() {
 			stmt.duration,
 			// Default durations.
 			AccessDuration {
-				grant: Some(Duration::from_days(30)),
-				token: Some(Duration::from_hours(1)),
+				grant: Some(Duration::from_days(30).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			}
 		);
@@ -1606,9 +1635,13 @@ fn parse_define_access_bearer() {
 	}
 	// For record on database.
 	{
-		let res = test_parse!(
+		let res = test_parse_with_settings!(
 			parse_stmt,
-			r#"DEFINE ACCESS a ON DB TYPE BEARER FOR RECORD COMMENT "foo""#
+			r#"DEFINE ACCESS a ON DB TYPE BEARER FOR RECORD COMMENT "foo""#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
 		)
 		.unwrap();
 
@@ -1624,8 +1657,8 @@ fn parse_define_access_bearer() {
 			stmt.duration,
 			// Default durations.
 			AccessDuration {
-				grant: Some(Duration::from_days(30)),
-				token: Some(Duration::from_hours(1)),
+				grant: Some(Duration::from_days(30).unwrap()),
+				token: Some(Duration::from_hours(1).unwrap()),
 				session: None,
 			}
 		);
@@ -1640,9 +1673,13 @@ fn parse_define_access_bearer() {
 	}
 	// For record on namespace.
 	{
-		let res = test_parse!(
+		let res = test_parse_with_settings!(
 			parse_stmt,
-			r#"DEFINE ACCESS a ON NS TYPE BEARER FOR RECORD COMMENT "foo""#
+			r#"DEFINE ACCESS a ON NS TYPE BEARER FOR RECORD COMMENT "foo""#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
 		);
 		assert!(
 			res.is_err(),
@@ -1652,9 +1689,13 @@ fn parse_define_access_bearer() {
 	}
 	// For record on root.
 	{
-		let res = test_parse!(
+		let res = test_parse_with_settings!(
 			parse_stmt,
-			r#"DEFINE ACCESS a ON ROOT TYPE BEARER FOR RECORD COMMENT "foo""#
+			r#"DEFINE ACCESS a ON ROOT TYPE BEARER FOR RECORD COMMENT "foo""#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
 		);
 		assert!(
 			res.is_err(),
@@ -1664,11 +1705,13 @@ fn parse_define_access_bearer() {
 	}
 	// For user. Grant, session and token duration. With JWT.
 	{
-		let res = test_parse!(
-			parse_stmt,
-			r#"DEFINE ACCESS a ON DB TYPE BEARER FOR USER WITH JWT ALGORITHM HS384 KEY "foo" DURATION FOR GRANT 90d, FOR TOKEN 10s, FOR SESSION 15m"#
-		)
-		.unwrap();
+		let res = test_parse_with_settings!(parse_stmt,
+			r#"DEFINE ACCESS a ON DB TYPE BEARER FOR USER WITH JWT ALGORITHM HS384 KEY "foo" DURATION FOR GRANT 90d, FOR TOKEN 10s, FOR SESSION 15m"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		).unwrap();
 		assert_eq!(
 			res,
 			Statement::Define(DefineStatement::Access(DefineAccessStatement {
@@ -1691,7 +1734,7 @@ fn parse_define_access_bearer() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(90)),
+					grant: Some(Duration::from_days(90).unwrap()),
 					token: Some(Duration::from_secs(10)),
 					session: Some(Duration::from_secs(900)),
 				},
@@ -1703,11 +1746,13 @@ fn parse_define_access_bearer() {
 	}
 	// For record. Grant, session and token duration. With JWT.
 	{
-		let res = test_parse!(
-			parse_stmt,
-			r#"DEFINE ACCESS a ON DB TYPE BEARER FOR RECORD WITH JWT ALGORITHM HS384 KEY "foo" DURATION FOR GRANT 90d, FOR TOKEN 10s, FOR SESSION 15m"#
-		)
-		.unwrap();
+		let res = test_parse_with_settings!(parse_stmt,
+			r#"DEFINE ACCESS a ON DB TYPE BEARER FOR RECORD WITH JWT ALGORITHM HS384 KEY "foo" DURATION FOR GRANT 90d, FOR TOKEN 10s, FOR SESSION 15m"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		).unwrap();
 		assert_eq!(
 			res,
 			Statement::Define(DefineStatement::Access(DefineAccessStatement {
@@ -1730,7 +1775,7 @@ fn parse_define_access_bearer() {
 				}),
 				authenticate: None,
 				duration: AccessDuration {
-					grant: Some(Duration::from_days(90)),
+					grant: Some(Duration::from_days(90).unwrap()),
 					token: Some(Duration::from_secs(10)),
 					session: Some(Duration::from_secs(900)),
 				},
@@ -1817,7 +1862,6 @@ fn parse_define_table() {
 			cache_events_ts: uuid::Uuid::default(),
 			cache_tables_ts: uuid::Uuid::default(),
 			cache_indexes_ts: uuid::Uuid::default(),
-			cache_lives_ts: uuid::Uuid::default(),
 		}))
 	);
 }
@@ -1879,6 +1923,8 @@ fn parse_define_field() {
 				comment: None,
 				if_not_exists: false,
 				overwrite: false,
+				reference: None,
+				default_always: false,
 			}))
 		)
 	}
@@ -1911,6 +1957,8 @@ fn parse_define_field() {
 				comment: None,
 				if_not_exists: false,
 				overwrite: false,
+				reference: None,
+				default_always: false,
 			}))
 		)
 	}
@@ -2072,7 +2120,7 @@ fn parse_define_analyzer() {
 fn parse_delete() {
 	let res = test_parse!(
 		parse_statement,
-		"DELETE FROM ONLY |foo:32..64| Where 2 RETURN AFTER TIMEOUT 1s PARALLEL"
+		"DELETE FROM ONLY |foo:32..64| WITH INDEX index,index_2 Where 2 RETURN AFTER TIMEOUT 1s PARALLEL EXPLAIN FULL"
 	)
 	.unwrap();
 	assert_eq!(
@@ -2080,10 +2128,12 @@ fn parse_delete() {
 		Statement::Delete(DeleteStatement {
 			only: true,
 			what: Values(vec![Value::Mock(crate::sql::Mock::Range("foo".to_string(), 32, 64))]),
+			with: Some(With::Index(vec!["index".to_owned(), "index_2".to_owned()])),
 			cond: Some(Cond(Value::Number(Number::Int(2)))),
 			output: Some(Output::After),
 			timeout: Some(Timeout(Duration(std::time::Duration::from_secs(1)))),
 			parallel: true,
+			explain: Some(Explain(true)),
 		})
 	);
 }
@@ -2092,7 +2142,7 @@ fn parse_delete() {
 fn parse_delete_2() {
 	let res = test_parse!(
 		parse_stmt,
-		r#"DELETE FROM ONLY a:b->?[$][?true] WHERE null RETURN NULL TIMEOUT 1h PARALLEL"#
+		r#"DELETE FROM ONLY a:b->?[$][?true] WITH INDEX index,index_2 WHERE null RETURN NULL TIMEOUT 1h PARALLEL EXPLAIN"#
 	)
 	.unwrap();
 
@@ -2112,10 +2162,12 @@ fn parse_delete_2() {
 				Part::Last,
 				Part::Where(Value::Bool(true)),
 			]))]),
+			with: Some(With::Index(vec!["index".to_owned(), "index_2".to_owned()])),
 			cond: Some(Cond(Value::Null)),
 			output: Some(Output::Null),
 			timeout: Some(Timeout(Duration(std::time::Duration::from_secs(60 * 60)))),
-			parallel: true
+			parallel: true,
+			explain: Some(Explain(false)),
 		})
 	)
 }
@@ -2812,7 +2864,7 @@ fn parse_remove() {
 fn parse_update() {
 	let res = test_parse!(
 		parse_stmt,
-		r#"UPDATE ONLY <future> { "text" }, a->b UNSET foo... , a->b, c[*] WHERE true RETURN DIFF TIMEOUT 1s PARALLEL"#
+		r#"UPDATE ONLY <future> { "text" }, a->b WITH INDEX index,index_2 UNSET foo... , a->b, c[*] WHERE true RETURN DIFF TIMEOUT 1s PARALLEL EXPLAIN FULL"#
 	)
 	.unwrap();
 	assert_eq!(
@@ -2828,11 +2880,11 @@ fn parse_update() {
 					Part::Graph(Graph {
 						dir: Dir::Out,
 						what: Tables(vec![Table("b".to_string())]),
-						expr: Fields::all(),
 						..Default::default()
 					})
 				]))
 			]),
+			with: Some(With::Index(vec!["index".to_owned(), "index_2".to_owned()])),
 			cond: Some(Cond(Value::Bool(true))),
 			data: Some(Data::UnsetExpression(vec![
 				Idiom(vec![Part::Field(Ident("foo".to_string())), Part::Flatten]),
@@ -2841,7 +2893,6 @@ fn parse_update() {
 					Part::Graph(Graph {
 						dir: Dir::Out,
 						what: Tables(vec![Table("b".to_string())]),
-						expr: Fields::all(),
 						..Default::default()
 					})
 				]),
@@ -2850,6 +2901,7 @@ fn parse_update() {
 			output: Some(Output::Diff),
 			timeout: Some(Timeout(Duration(std::time::Duration::from_secs(1)))),
 			parallel: true,
+			explain: Some(Explain(true))
 		})
 	);
 }
@@ -2858,7 +2910,7 @@ fn parse_update() {
 fn parse_upsert() {
 	let res = test_parse!(
 		parse_stmt,
-		r#"UPSERT ONLY <future> { "text" }, a->b UNSET foo... , a->b, c[*] WHERE true RETURN DIFF TIMEOUT 1s PARALLEL"#
+		r#"UPSERT ONLY <future> { "text" }, a->b WITH INDEX index,index_2 UNSET foo... , a->b, c[*] WHERE true RETURN DIFF TIMEOUT 1s PARALLEL EXPLAIN"#
 	)
 	.unwrap();
 	assert_eq!(
@@ -2874,11 +2926,11 @@ fn parse_upsert() {
 					Part::Graph(Graph {
 						dir: Dir::Out,
 						what: Tables(vec![Table("b".to_string())]),
-						expr: Fields::all(),
 						..Default::default()
 					})
 				]))
 			]),
+			with: Some(With::Index(vec!["index".to_owned(), "index_2".to_owned()])),
 			cond: Some(Cond(Value::Bool(true))),
 			data: Some(Data::UnsetExpression(vec![
 				Idiom(vec![Part::Field(Ident("foo".to_string())), Part::Flatten]),
@@ -2887,7 +2939,6 @@ fn parse_upsert() {
 					Part::Graph(Graph {
 						dir: Dir::Out,
 						what: Tables(vec![Table("b".to_string())]),
-						expr: Fields::all(),
 						..Default::default()
 					})
 				]),
@@ -2896,6 +2947,7 @@ fn parse_upsert() {
 			output: Some(Output::Diff),
 			timeout: Some(Timeout(Duration(std::time::Duration::from_secs(1)))),
 			parallel: true,
+			explain: Some(Explain(false))
 		})
 	);
 }
@@ -2904,7 +2956,15 @@ fn parse_upsert() {
 fn parse_access_grant() {
 	// User
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON NAMESPACE GRANT FOR USER b"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON NAMESPACE GRANT FOR USER b"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Grant(AccessStatementGrant {
@@ -2916,7 +2976,15 @@ fn parse_access_grant() {
 	}
 	// Record
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON NAMESPACE GRANT FOR RECORD b:c"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON NAMESPACE GRANT FOR RECORD b:c"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Grant(AccessStatementGrant {
@@ -2935,7 +3003,15 @@ fn parse_access_grant() {
 fn parse_access_show() {
 	// All
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE SHOW ALL"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE SHOW ALL"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Show(AccessStatementShow {
@@ -2948,7 +3024,15 @@ fn parse_access_show() {
 	}
 	// Grant
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE SHOW GRANT b"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE SHOW GRANT b"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Show(AccessStatementShow {
@@ -2961,7 +3045,15 @@ fn parse_access_show() {
 	}
 	// Condition
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE SHOW WHERE true"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE SHOW WHERE true"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Show(AccessStatementShow {
@@ -2978,7 +3070,15 @@ fn parse_access_show() {
 fn parse_access_revoke() {
 	// All
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE REVOKE ALL"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE REVOKE ALL"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Revoke(AccessStatementRevoke {
@@ -2991,7 +3091,15 @@ fn parse_access_revoke() {
 	}
 	// Grant
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE REVOKE GRANT b"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE REVOKE GRANT b"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Revoke(AccessStatementRevoke {
@@ -3004,7 +3112,15 @@ fn parse_access_revoke() {
 	}
 	// Condition
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE REVOKE WHERE true"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE REVOKE WHERE true"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Revoke(AccessStatementRevoke {
@@ -3021,8 +3137,15 @@ fn parse_access_revoke() {
 fn parse_access_purge() {
 	// All
 	{
-		let res =
-			test_parse!(parse_stmt, r#"ACCESS a ON DATABASE PURGE EXPIRED, REVOKED"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE PURGE EXPIRED, REVOKED"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Purge(AccessStatementPurge {
@@ -3036,7 +3159,15 @@ fn parse_access_purge() {
 	}
 	// Expired
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE PURGE EXPIRED"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE PURGE EXPIRED"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Purge(AccessStatementPurge {
@@ -3050,7 +3181,15 @@ fn parse_access_purge() {
 	}
 	// Revoked
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE PURGE REVOKED"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE PURGE REVOKED"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Purge(AccessStatementPurge {
@@ -3064,7 +3203,15 @@ fn parse_access_purge() {
 	}
 	// Expired for 90 days
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE PURGE EXPIRED FOR 90d"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE PURGE EXPIRED FOR 90d"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Purge(AccessStatementPurge {
@@ -3072,13 +3219,21 @@ fn parse_access_purge() {
 				base: Some(Base::Db),
 				expired: true,
 				revoked: false,
-				grace: Duration::from_days(90),
+				grace: Duration::from_days(90).unwrap(),
 			}))
 		);
 	}
 	// Revoked for 90 days
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE PURGE REVOKED FOR 90d"#).unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE PURGE REVOKED FOR 90d"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Purge(AccessStatementPurge {
@@ -3086,14 +3241,21 @@ fn parse_access_purge() {
 				base: Some(Base::Db),
 				expired: false,
 				revoked: true,
-				grace: Duration::from_days(90),
+				grace: Duration::from_days(90).unwrap(),
 			}))
 		);
 	}
 	// Invalid for 90 days
 	{
-		let res = test_parse!(parse_stmt, r#"ACCESS a ON DATABASE PURGE REVOKED, EXPIRED FOR 90d"#)
-			.unwrap();
+		let res = test_parse_with_settings!(
+			parse_stmt,
+			r#"ACCESS a ON DATABASE PURGE REVOKED, EXPIRED FOR 90d"#,
+			ParserSettings {
+				bearer_access_enabled: true,
+				..Default::default()
+			}
+		)
+		.unwrap();
 		assert_eq!(
 			res,
 			Statement::Access(AccessStatement::Purge(AccessStatementPurge {
@@ -3101,7 +3263,7 @@ fn parse_access_purge() {
 				base: Some(Base::Db),
 				expired: true,
 				revoked: true,
-				grace: Duration::from_days(90),
+				grace: Duration::from_days(90).unwrap(),
 			}))
 		);
 	}

@@ -8,6 +8,7 @@ use crate::fnc::util::string::fuzzy::Fuzzy;
 use crate::sql::id::range::IdRange;
 use crate::sql::kind::Literal;
 use crate::sql::range::OldRange;
+use crate::sql::reference::Refs;
 use crate::sql::statements::info::InfoStructure;
 use crate::sql::Closure;
 use crate::sql::{
@@ -20,7 +21,7 @@ use crate::sql::{
 	Strand, Subquery, Table, Tables, Thing, Uuid,
 };
 use chrono::{DateTime, Utc};
-use derive::Store;
+
 use geo::Point;
 use reblessive::tree::Stk;
 use revision::revisioned;
@@ -84,7 +85,7 @@ impl From<&Tables> for Values {
 }
 
 #[revisioned(revision = 2)]
-#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Serialize, Deserialize, Store, Hash)]
+#[derive(Clone, Debug, Default, PartialEq, PartialOrd, Serialize, Deserialize, Hash)]
 #[serde(rename = "$surrealdb::private::sql::Value")]
 #[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[non_exhaustive]
@@ -137,6 +138,7 @@ pub enum Value {
 	Query(Query),
 	Model(Box<Model>),
 	Closure(Box<Closure>),
+	Refs(Refs),
 	// Add new variants here
 }
 
@@ -933,6 +935,15 @@ impl Value {
 		matches!(self, Value::None)
 	}
 
+	/// Check if this Value is NONE
+	pub fn is_empty_array(&self) -> bool {
+		if let Value::Array(v) = self {
+			v.is_empty()
+		} else {
+			false
+		}
+	}
+
 	/// Check if this Value is NULL
 	pub fn is_null(&self) -> bool {
 		matches!(self, Value::Null)
@@ -1384,6 +1395,10 @@ impl Value {
 				})
 			}
 			Kind::Literal(lit) => self.coerce_to_literal(lit),
+			Kind::References(_, _) => Err(Error::CoerceTo {
+				from: self,
+				into: kind.to_string(),
+			}),
 		};
 		// Check for any conversion errors
 		match res {
@@ -1979,6 +1994,10 @@ impl Value {
 				})
 			}
 			Kind::Literal(lit) => self.convert_to_literal(lit),
+			Kind::References(_, _) => Err(Error::CoerceTo {
+				from: self,
+				into: kind.to_string(),
+			}),
 		};
 		// Check for any conversion errors
 		match res {
@@ -2774,11 +2793,27 @@ impl Value {
 	/// Check if all Values in an Array contain another Value
 	pub fn contains_all(&self, other: &Value) -> bool {
 		match other {
+			Value::Array(v) if v.iter().all(|v| v.is_strand()) && self.is_strand() => {
+				// confirmed as strand so all return false is unreachable
+				let Value::Strand(this) = self else {
+					return false;
+				};
+				v.iter().all(|s| {
+					let Value::Strand(other_string) = s else {
+						return false;
+					};
+					this.0.contains(&other_string.0)
+				})
+			}
 			Value::Array(v) => v.iter().all(|v| match self {
 				Value::Array(w) => w.iter().any(|w| v.equal(w)),
 				Value::Geometry(_) => self.contains(v),
 				_ => false,
 			}),
+			Value::Strand(other_strand) => match self {
+				Value::Strand(s) => s.0.contains(&other_strand.0),
+				_ => false,
+			},
 			_ => false,
 		}
 	}
@@ -2786,11 +2821,27 @@ impl Value {
 	/// Check if any Values in an Array contain another Value
 	pub fn contains_any(&self, other: &Value) -> bool {
 		match other {
+			Value::Array(v) if v.iter().all(|v| v.is_strand()) && self.is_strand() => {
+				// confirmed as strand so all return false is unreachable
+				let Value::Strand(this) = self else {
+					return false;
+				};
+				v.iter().any(|s| {
+					let Value::Strand(other_string) = s else {
+						return false;
+					};
+					this.0.contains(&other_string.0)
+				})
+			}
 			Value::Array(v) => v.iter().any(|v| match self {
 				Value::Array(w) => w.iter().any(|w| v.equal(w)),
 				Value::Geometry(_) => self.contains(v),
 				_ => false,
 			}),
+			Value::Strand(other_strand) => match self {
+				Value::Strand(s) => s.0.contains(&other_strand.0),
+				_ => false,
+			},
 			_ => false,
 		}
 	}
@@ -2890,6 +2941,7 @@ impl fmt::Display for Value {
 			Value::Thing(v) => write!(f, "{v}"),
 			Value::Uuid(v) => write!(f, "{v}"),
 			Value::Closure(v) => write!(f, "{v}"),
+			Value::Refs(v) => write!(f, "{v}"),
 		}
 	}
 }
@@ -2924,9 +2976,7 @@ impl Value {
 			Value::Idiom(v) => v.writeable(),
 			Value::Array(v) => v.iter().any(Value::writeable),
 			Value::Object(v) => v.iter().any(|(_, v)| v.writeable()),
-			Value::Function(v) => {
-				v.is_custom() || v.is_script() || v.args().iter().any(Value::writeable)
-			}
+			Value::Function(v) => v.writeable(),
 			Value::Model(m) => m.args.iter().any(Value::writeable),
 			Value::Subquery(v) => v.writeable(),
 			Value::Expression(v) => v.writeable(),
@@ -2974,6 +3024,7 @@ impl Value {
 			Value::Model(v) => v.compute(stk, ctx, opt, doc).await,
 			Value::Subquery(v) => stk.run(|stk| v.compute(stk, ctx, opt, doc)).await,
 			Value::Expression(v) => stk.run(|stk| v.compute(stk, ctx, opt, doc)).await,
+			Value::Refs(v) => v.compute(ctx, opt, doc).await,
 			_ => Ok(self.to_owned()),
 		}
 	}
@@ -3221,19 +3272,19 @@ mod tests {
 
 	#[test]
 	fn check_serialize() {
-		let enc: Vec<u8> = Value::None.into();
+		let enc: Vec<u8> = revision::to_vec(&Value::None).unwrap();
 		assert_eq!(2, enc.len());
-		let enc: Vec<u8> = Value::Null.into();
+		let enc: Vec<u8> = revision::to_vec(&Value::Null).unwrap();
 		assert_eq!(2, enc.len());
-		let enc: Vec<u8> = Value::Bool(true).into();
+		let enc: Vec<u8> = revision::to_vec(&Value::Bool(true)).unwrap();
 		assert_eq!(3, enc.len());
-		let enc: Vec<u8> = Value::Bool(false).into();
+		let enc: Vec<u8> = revision::to_vec(&Value::Bool(false)).unwrap();
 		assert_eq!(3, enc.len());
-		let enc: Vec<u8> = Value::from("test").into();
+		let enc: Vec<u8> = revision::to_vec(&Value::from("test")).unwrap();
 		assert_eq!(8, enc.len());
-		let enc: Vec<u8> = Value::parse("{ hello: 'world' }").into();
+		let enc: Vec<u8> = revision::to_vec(&Value::parse("{ hello: 'world' }")).unwrap();
 		assert_eq!(19, enc.len());
-		let enc: Vec<u8> = Value::parse("{ compact: true, schema: 0 }").into();
+		let enc: Vec<u8> = revision::to_vec(&Value::parse("{ compact: true, schema: 0 }")).unwrap();
 		assert_eq!(27, enc.len());
 	}
 
@@ -3245,8 +3296,8 @@ mod tests {
 		let res = Value::parse(
 			"{ test: { something: [1, 'two', null, test:tobie, { trueee: false, noneee: nulll }] } }",
 		);
-		let enc: Vec<u8> = val.into();
-		let dec: Value = enc.into();
+		let enc: Vec<u8> = revision::to_vec(&val).unwrap();
+		let dec: Value = revision::from_slice(&enc).unwrap();
 		assert_eq!(res, dec);
 	}
 

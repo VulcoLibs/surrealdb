@@ -20,6 +20,8 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 use surrealdb_core::sql::to_value as to_core_value;
+use surrealdb_core::sql::Value as CoreValue;
+use surrealdb_core::syn;
 
 pub(crate) mod live;
 pub(crate) mod query;
@@ -55,13 +57,17 @@ mod version;
 mod tests;
 
 pub use authenticate::Authenticate;
-#[doc(hidden)] // Not supported yet
+/// Not supported yet
+#[doc(hidden)]
 pub use begin::Begin;
-#[doc(hidden)] // Not supported yet
+/// Not supported yet
+#[doc(hidden)]
 pub use begin::Transaction;
-#[doc(hidden)] // Not supported yet
+/// Not supported yet
+#[doc(hidden)]
 pub use cancel::Cancel;
-#[doc(hidden)] // Not supported yet
+/// Not supported yet
+#[doc(hidden)]
 pub use commit::Commit;
 pub use content::Content;
 pub use create::Create;
@@ -217,8 +223,10 @@ where
 	/// ```
 	pub fn init() -> Self {
 		Self {
-			router: Arc::new(OnceLock::new()),
-			waiter: Arc::new(watch::channel(None)),
+			inner: Arc::new(super::Inner {
+				router: OnceLock::new(),
+				waiter: watch::channel(None),
+			}),
 			engine: PhantomData,
 		}
 	}
@@ -244,17 +252,18 @@ where
 	/// ```
 	pub fn new<P>(address: impl IntoEndpoint<P, Client = C>) -> Connect<C, Self> {
 		Connect {
-			router: Arc::new(OnceLock::new()),
-			engine: PhantomData,
+			surreal: Surreal::init(),
 			address: address.into_endpoint(),
 			capacity: 0,
-			waiter: Arc::new(watch::channel(None)),
 			response_type: PhantomData,
 		}
 	}
 
-	#[doc(hidden)] // Not supported yet
+	/// Not supported yet
+	#[doc(hidden)]
+	#[cfg(surrealdb_unstable)] // Mark this API as unstable
 	pub fn transaction(self) -> Begin<C> {
+		warn!("Client side transactions are not yet supported. This API doesn't do anything yet.");
 		Begin {
 			client: self,
 		}
@@ -642,15 +651,33 @@ where
 	/// # }
 	/// ```
 	pub fn query(&self, query: impl opt::IntoQuery) -> Query<C> {
-		let inner = query.into_query().map(|x| ValidQuery {
-			client: Cow::Borrowed(self),
-			query: x,
-			bindings: Default::default(),
-			register_live_queries: true,
-		});
+		let result = match query.as_str() {
+			Some(surql) => self.inner.router.extract().and_then(|router| {
+				let capabilities = &router.config.capabilities;
+				syn::parse_with_capabilities(surql, capabilities)
+					.map_err(Into::into)
+					.and_then(opt::IntoQuery::into_query)
+			}),
+			None => query.into_query(),
+		};
+		let inner = match result {
+			Ok(query) => Ok(ValidQuery::Normal {
+				query,
+				register_live_queries: true,
+				bindings: Default::default(),
+			}),
+			Err(crate::Error::Api(crate::api::err::Error::RawQuery(query))) => {
+				Ok(ValidQuery::Raw {
+					query,
+					bindings: Default::default(),
+				})
+			}
+			Err(error) => Err(error),
+		};
 
 		Query {
 			inner,
+			client: Cow::Borrowed(self),
 		}
 	}
 
@@ -1317,7 +1344,7 @@ where
 
 	/// Wait for the selected event to happen before proceeding
 	pub async fn wait_for(&self, event: WaitFor) {
-		let mut rx = self.waiter.0.subscribe();
+		let mut rx = self.inner.waiter.0.subscribe();
 		rx.wait_for(|current| match current {
 			// The connection hasn't been initialised yet.
 			None => false,
@@ -1404,5 +1431,13 @@ where
 			is_ml: false,
 			import_type: PhantomData,
 		}
+	}
+}
+
+fn validate_data(data: &CoreValue, error_message: &str) -> crate::Result<()> {
+	match data {
+		CoreValue::Object(_) => Ok(()),
+		CoreValue::Array(v) if v.iter().all(CoreValue::is_object) => Ok(()),
+		_ => Err(crate::api::err::Error::InvalidParams(error_message.to_owned()).into()),
 	}
 }

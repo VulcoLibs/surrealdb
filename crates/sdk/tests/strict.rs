@@ -26,7 +26,7 @@ async fn strict_mode_no_namespace() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::NsNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -34,7 +34,7 @@ async fn strict_mode_no_namespace() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::NsNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -42,7 +42,7 @@ async fn strict_mode_no_namespace() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::NsNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -50,7 +50,7 @@ async fn strict_mode_no_namespace() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::NsNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -58,7 +58,7 @@ async fn strict_mode_no_namespace() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::NsNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -81,13 +81,13 @@ async fn strict_mode_no_database() -> Result<(), Error> {
 	assert_eq!(res.len(), 5);
 	//
 	let tmp = res.remove(0).result;
-	assert!(tmp.is_ok());
+	tmp.unwrap();
 	//
 	let tmp = res.remove(0).result;
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::DbNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -95,7 +95,7 @@ async fn strict_mode_no_database() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::DbNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -103,7 +103,7 @@ async fn strict_mode_no_database() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::DbNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -111,7 +111,7 @@ async fn strict_mode_no_database() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::DbNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -134,16 +134,16 @@ async fn strict_mode_no_table() -> Result<(), Error> {
 	assert_eq!(res.len(), 5);
 	//
 	let tmp = res.remove(0).result;
-	assert!(tmp.is_ok());
+	tmp.unwrap();
 	//
 	let tmp = res.remove(0).result;
-	assert!(tmp.is_ok());
+	tmp.unwrap();
 	//
 	let tmp = res.remove(0).result;
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::TbNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -151,7 +151,7 @@ async fn strict_mode_no_table() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::TbNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -159,7 +159,7 @@ async fn strict_mode_no_table() -> Result<(), Error> {
 	assert!(matches!(
 		tmp.err(),
 		Some(Error::TbNotFound {
-			value: _
+			name: _
 		})
 	));
 	//
@@ -182,16 +182,16 @@ async fn strict_mode_all_ok() -> Result<(), Error> {
 	assert_eq!(res.len(), 6);
 	//
 	let tmp = res.remove(0).result;
-	assert!(tmp.is_ok());
+	tmp.unwrap();
 	//
 	let tmp = res.remove(0).result;
-	assert!(tmp.is_ok());
+	tmp.unwrap();
 	//
 	let tmp = res.remove(0).result;
-	assert!(tmp.is_ok());
+	tmp.unwrap();
 	//
 	let tmp = res.remove(0).result;
-	assert!(tmp.is_ok());
+	tmp.unwrap();
 	//
 	let tmp = res.remove(0).result?;
 	let val = Value::parse("[{ id: test:tester, extra: true }]");
@@ -221,7 +221,7 @@ async fn loose_mode_all_ok() -> Result<(), Error> {
 	assert_eq!(res.len(), 7);
 	//
 	let tmp = res.remove(0).result;
-	assert!(tmp.is_ok());
+	tmp.unwrap();
 	//
 	let tmp = res.remove(0).result?;
 	let val = Value::parse("[{ id: test:tester, extra: true }]");
@@ -232,15 +232,15 @@ async fn loose_mode_all_ok() -> Result<(), Error> {
 	assert_eq!(tmp, val);
 	//
 	let tmp = res.remove(0).result?;
-	let val = Value::parse(&format!(
-		"{{
-			accesses: {{ }},
-			namespaces: {{ test: 'DEFINE NAMESPACE test' }},
-			nodes: {{ }},
-			system: {{ available_parallelism: 0, cpu_usage: 0.0f, load_average: [0.0f, 0.0f, 0.0f], memory_allocated: 0, memory_usage: 0, physical_cores: 0 }},
-			users: {{ }},
-		}}"
-	));
+	let val = Value::parse(
+		"{
+			accesses: { },
+			namespaces: { test: 'DEFINE NAMESPACE test' },
+			nodes: { },
+			system: { available_parallelism: 0, cpu_usage: 0.0f, load_average: [0.0f, 0.0f, 0.0f], memory_allocated: 0, memory_usage: 0, physical_cores: 0, threads: 0 },
+			users: { },
+		}"
+	);
 	assert_eq!(tmp, val);
 	//
 	let tmp = res.remove(0).result?;
@@ -258,6 +258,7 @@ async fn loose_mode_all_ok() -> Result<(), Error> {
 		"{
 			accesses: {},
 			analyzers: {},
+			apis: {},
 			configs: {},
 			functions: {},
 			models: {},
