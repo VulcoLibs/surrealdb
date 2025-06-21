@@ -92,7 +92,7 @@ use surrealdb_core::{
 use super::resource_to_values;
 
 #[cfg(not(target_family = "wasm"))]
-pub(crate) mod native;
+pub mod native;
 #[cfg(target_family = "wasm")]
 pub(crate) mod wasm;
 
